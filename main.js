@@ -28,6 +28,7 @@ const state = {
     items: [],
     total: null,
     rawText: "",
+    rawRows: null, // for AI-assisted extraction on messy formats
   },
 };
 
@@ -145,14 +146,23 @@ async function copyText(text) {
 }
 
 function normalizeItems(items) {
+  const toNum = (v) => {
+    if (v === undefined || v === null || v === "") return "";
+    if (typeof v === "number") return Number.isFinite(v) ? v : "";
+    const t = String(v).replace(/[^\d.\-]/g, "");
+    if (!t) return "";
+    const n = Number(t);
+    return Number.isFinite(n) ? n : "";
+  };
+
   return (items || [])
     .map((it) => ({
       name: (it?.name ?? "").toString().trim(),
       spec: (it?.spec ?? it?.note ?? "").toString().trim(),
-      qty: it?.qty === undefined || it?.qty === null || it?.qty === "" ? "" : Number(it.qty),
+      qty: toNum(it?.qty),
       unitPrice:
-        it?.unitPrice === undefined || it?.unitPrice === null || it?.unitPrice === "" ? "" : Number(it.unitPrice),
-      amount: it?.amount === undefined || it?.amount === null || it?.amount === "" ? "" : Number(it.amount),
+        toNum(it?.unitPrice),
+      amount: toNum(it?.amount),
     }))
     .filter((it) => it.name || it.amount || it.unitPrice || it.spec);
 }
@@ -224,16 +234,79 @@ async function loadPdfJs() {
   return mod;
 }
 
+function looksLikeHtmlBytes(bytes) {
+  // Some marketplaces export "xls" as HTML tables.
+  // Detect by first non-whitespace byte being '<' (0x3c) or BOM + '<'.
+  let i = 0;
+  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x0a || bytes[i] === 0x0d || bytes[i] === 0x09)) i++;
+  if (i + 3 < bytes.length && bytes[i] === 0xef && bytes[i + 1] === 0xbb && bytes[i + 2] === 0xbf) i += 3;
+  return i < bytes.length && bytes[i] === 0x3c;
+}
+
+function tableToRows(table) {
+  const rows = [];
+  for (const tr of table.querySelectorAll("tr")) {
+    const cells = Array.from(tr.querySelectorAll("th,td")).map((td) =>
+      String(td.textContent || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
+    if (cells.some(Boolean)) rows.push(cells);
+  }
+  return rows;
+}
+
+function pickBestTable(doc) {
+  const tables = Array.from(doc.querySelectorAll("table"));
+  if (!tables.length) return null;
+
+  const keys = ["품목", "항목", "내용", "규격", "수량", "단가", "금액", "합계", "상품", "수 량", "판매가"];
+  let best = { score: -1, rows: null };
+
+  for (const t of tables) {
+    const rows = tableToRows(t);
+    if (rows.length < 2) continue;
+    const joined = rows.slice(0, 40).map((r) => r.join(" ")).join(" ");
+    let score = 0;
+    for (const k of keys) if (joined.includes(k)) score += 2;
+    const maxCols = Math.max(...rows.map((r) => r.length));
+    score += Math.min(20, rows.length) + Math.min(10, maxCols);
+    if (score > best.score) best = { score, rows };
+  }
+  return best.rows;
+}
+
+async function extractFromHtmlXls(file) {
+  const html = await file.text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const rows = pickBestTable(doc) || [];
+  return rows;
+}
+
 async function extractFromXlsx(file) {
   if (!window.XLSX) {
     await loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js");
   }
 
-  const ab = await file.arrayBuffer();
-  const wb = window.XLSX.read(ab, { type: "array" });
-  const firstName = wb.SheetNames[0];
-  const ws = wb.Sheets[firstName];
-  const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
+  // Some .xls files are actually HTML. Detect and parse accordingly.
+  const head = new Uint8Array(await file.slice(0, 256).arrayBuffer());
+  let rows;
+  if (looksLikeHtmlBytes(head)) {
+    rows = await extractFromHtmlXls(file);
+  } else {
+    const ab = await file.arrayBuffer();
+    try {
+      const wb = window.XLSX.read(ab, { type: "array" });
+      const firstName = wb.SheetNames[0];
+      const ws = wb.Sheets[firstName];
+      rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
+    } catch (e) {
+      // Fallback: try HTML parse even if the extension says xls/xlsx.
+      console.warn("XLSX.read failed; falling back to HTML parse:", e);
+      rows = await extractFromHtmlXls(file);
+    }
+  }
 
   const headerIdx = findHeaderRow(rows);
   const items = [];
@@ -254,18 +327,39 @@ async function extractFromXlsx(file) {
 
   const normalized = normalizeItems(items);
   const total = computeTotal(normalized);
-  state.extracted = { source: "xlsx", items: normalized, total, rawText: "" };
+  state.extracted = { source: "xlsx", items: normalized, total, rawText: "", rawRows: rows.slice(0, 240) };
 }
 
 function findHeaderRow(rows) {
-  const keys = ["품목", "항목", "내용", "규격", "수량", "단가", "금액", "합계"];
+  const keys = [
+    "품목",
+    "항목",
+    "내용",
+    "규격",
+    "옵션",
+    "모델",
+    "상품명",
+    "상품",
+    "수량",
+    "주문수량",
+    "구매수량",
+    "단가",
+    "판매가",
+    "금액",
+    "합계",
+    "합계금액",
+    "주문금액",
+    "결제금액",
+    "총액",
+    "총금액",
+  ];
   const maxScan = Math.min(rows.length, 50);
   for (let i = 0; i < maxScan; i++) {
     const row = rows[i].map((c) => String(c || "").trim());
     const joined = row.join(" ");
     let score = 0;
     for (const k of keys) if (joined.includes(k)) score++;
-    if (score >= 3) return i;
+    if (score >= 2 && row.length >= 4) return i;
   }
   return -1;
 }
@@ -277,11 +371,11 @@ function mapCols(header) {
   };
   const by = (arr) => (h) => arr.some((k) => h.includes(k));
 
-  const name = idxOf(by(["품목", "항목", "내용", "제품", "서비스", "내역"]));
-  const spec = idxOf(by(["규격", "사양", "spec", "SPEC"]));
-  const qty = idxOf(by(["수량", "수 량", "qty", "QTY"]));
-  const unitPrice = idxOf(by(["단가", "단 가", "unit", "price", "단위금액", "단위 금액"]));
-  const amount = idxOf(by(["금액", "공급가", "공급가액", "합계", "총액", "amount"]));
+  const name = idxOf(by(["품목", "항목", "내용", "제품", "서비스", "내역", "상품명", "상품", "상품정보"]));
+  const spec = idxOf(by(["규격", "사양", "옵션", "모델", "모델명", "spec", "SPEC"]));
+  const qty = idxOf(by(["수량", "수 량", "qty", "QTY", "주문수량", "구매수량"]));
+  const unitPrice = idxOf(by(["단가", "단 가", "판매가", "판매 단가", "unit", "price", "단위금액", "단위 금액"]));
+  const amount = idxOf(by(["금액", "공급가", "공급가액", "합계", "합계금액", "주문금액", "결제금액", "총액", "총금액", "amount"]));
 
   return { name, spec, qty, unitPrice, amount };
 }
@@ -314,7 +408,7 @@ async function extractFromPdf(file) {
     all += text + "\n";
   }
 
-  state.extracted = { source: "pdf", items: [], total: null, rawText: all.trim() };
+  state.extracted = { source: "pdf", items: [], total: null, rawText: all.trim(), rawRows: null };
 }
 
 function toDocPayload() {
@@ -343,6 +437,24 @@ function validateForGenerate(payload) {
   if (!payload.meta.subject) errs.push("제목을 입력하세요.");
   // Allow generating even without a quote; we won't invent numbers and will mark unknowns as '미기재'.
   return errs;
+}
+
+async function callExtractApi({ source, filename, rows, rawText }) {
+  const res = await fetch("/api/extract", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source, filename, rows, rawText }),
+  });
+
+  const txt = await res.text();
+  let data;
+  try {
+    data = JSON.parse(txt);
+  } catch {
+    throw new Error(`API 응답 파싱 실패: ${txt.slice(0, 200)}`);
+  }
+  if (!res.ok) throw new Error(data?.error || `API 오류 (HTTP ${res.status})`);
+  return data;
 }
 
 async function callOutlineApi(payload) {
@@ -479,6 +591,34 @@ async function onExtract() {
       return;
     }
 
+    // If heuristic extraction failed, ask the AI to structure items from rows/text.
+    if (!state.extracted.items?.length) {
+      try {
+        const rows = state.extracted.rawRows;
+        const rawText = state.extracted.rawText;
+        const data = await callExtractApi({
+          source: state.extracted.source,
+          filename: f.name,
+          rows,
+          rawText,
+        });
+
+        const items = normalizeItems(data?.items || []);
+        const total = computeTotal(items) ?? (Number.isFinite(data?.total) ? data.total : null);
+        if (items.length) {
+          state.extracted = {
+            ...state.extracted,
+            source: data.mode === "ai" ? "ai" : state.extracted.source,
+            items,
+            total,
+          };
+          setStatus("AI 보정 추출이 완료되었습니다.");
+        }
+      } catch (e) {
+        console.warn("AI extract failed:", e);
+      }
+    }
+
     renderItems(state.extracted.items);
     renderExtractSummary();
   } catch (e) {
@@ -523,6 +663,8 @@ function init() {
     }
     const kb = Math.max(1, Math.round(f.size / 1024));
     els.fileHint.textContent = `${f.name} (${kb} KB)`;
+    // Auto extract on file selection.
+    onExtract();
   });
 
   els.itemsTbody.addEventListener("click", async (e) => {
