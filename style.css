@@ -591,6 +591,10 @@ body.nav-open .scrim {
   box-shadow: var(--shadow);
 }
 
+.table-in-form {
+  margin-top: 8px;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

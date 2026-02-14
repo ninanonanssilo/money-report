@@ -126,6 +126,27 @@
                 </td>
               </tr>
               <tr>
+                <th scope="row">품목내역</th>
+                <td>
+                  <div id="extractSummary" class="summary"></div>
+                  <div class="table-wrap table-in-form">
+                    <table class="table" aria-label="추출 항목">
+                      <thead>
+                        <tr>
+                          <th class="num w-no">순번</th>
+                          <th>내용</th>
+                          <th class="w-spec">규격</th>
+                          <th class="num w-qty">수량</th>
+                          <th class="num w-unit">단가</th>
+                          <th class="num w-amt">금액</th>
+                        </tr>
+                      </thead>
+                      <tbody id="itemsTbody"></tbody>
+                    </table>
+                  </div>
+                </td>
+              </tr>
+              <tr>
                 <th scope="row">품의개요</th>
                 <td>
                   <div class="textarea-row">
@@ -145,48 +166,7 @@
               </tr>
             </tbody>
           </table>
-
-          <div class="actions">
-            <button id="btn-generate" class="btn btn-primary" type="button">품의서 생성</button>
-          </div>
-
-          <div id="status" class="status" role="status" aria-live="polite"></div>
         </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head">
-          <h2 class="section-title">품목내역</h2>
-        </div>
-        <div id="extractSummary" class="summary"></div>
-        <div class="table-wrap">
-          <table class="table" aria-label="추출 항목">
-            <thead>
-              <tr>
-                <th class="num w-no">순번</th>
-                <th>내용</th>
-                <th class="w-spec">규격</th>
-                <th class="num w-qty">수량</th>
-                <th class="num w-unit">단가</th>
-                <th class="num w-amt">금액</th>
-              </tr>
-            </thead>
-            <tbody id="itemsTbody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="section">
-        <div class="section-head">
-          <h2 class="section-title">생성 결과</h2>
-          <div class="head-actions">
-            <button id="btn-copy" class="btn btn-ghost" type="button">복사</button>
-            <button id="btn-print" class="btn btn-ghost" type="button">인쇄</button>
-          </div>
-        </div>
-        <article id="doc" class="doc" aria-label="품의서 미리보기">
-          <div class="doc-empty">아직 문서가 없습니다. 위에서 추출/생성을 진행하세요.</div>
-        </article>
       </section>
     </main>
 
@@ -197,33 +177,5 @@
       </div>
     </footer>
 
-    <template id="docTemplate">
-      <section class="doc-page doc-official">
-        <div class="doc-official-title">지출 품의서</div>
-
-        <table class="doc-official-table" aria-label="지출 품의서">
-          <tbody>
-            <tr>
-              <th scope="row" class="w-key">제 목</th>
-              <td data-bind="subject"></td>
-            </tr>
-            <tr>
-              <th scope="row" class="w-key">품<br />의<br />개<br />요</th>
-              <td class="doc-pre" data-bind="purpose"></td>
-            </tr>
-            <tr>
-              <th scope="row" class="w-key"></th>
-              <td class="doc-sign">
-                <div class="sign-grid">
-                  <div class="sign-cell"></div>
-                  <div class="sign-cell"></div>
-                  <div class="sign-cell"></div>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-    </template>
   </body>
 </html>

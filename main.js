@@ -10,24 +10,16 @@ const els = {
   fileHint: $("file-hint"),
 
   subject: $("subject"),
-  approvalNo: $("approvalNo"),
   docDate: $("docDate"),
   purpose: $("purpose"),
   notes: $("notes"),
 
   btnExtract: $("btn-extract"),
-  btnGenerate: $("btn-generate"),
-  btnPrint: $("btn-print"),
-  btnCopy: $("btn-copy"),
   btnAutoOutline: $("btn-auto-outline"),
   btnCopyPurpose: $("btn-copy-purpose"),
 
-  status: $("status"),
   extractSummary: $("extractSummary"),
   itemsTbody: $("itemsTbody"),
-
-  doc: $("doc"),
-  docTemplate: $("docTemplate"),
 };
 
 const state = {
@@ -48,7 +40,7 @@ function todayISO() {
 }
 
 function setStatus(msg) {
-  els.status.textContent = msg || "";
+  if (msg) console.log(msg);
 }
 
 function fmtMoney(v) {
@@ -325,7 +317,6 @@ function toDocPayload() {
   return {
     meta: {
       subject: els.subject.value.trim(),
-      approvalNo: els.approvalNo.value.trim(),
       docDate: (els.docDate.value || "").trim(),
       purpose: els.purpose.value.trim(),
       notes: els.notes.value.trim(),
@@ -408,67 +399,9 @@ function buildOfficialOutline(payload) {
   );
 }
 
-function renderDocFromTemplate(docData) {
-  const frag = els.docTemplate.content.cloneNode(true);
-  const root = frag.querySelector(".doc-page");
-
-  const bindText = (key, val) => {
-    const el = root.querySelector(`[data-bind="${key}"]`);
-    if (el) el.textContent = val ?? "";
-  };
-
-  bindText("approvalNo", docData.approvalNo || "");
-  bindText("docDate", docData.docDate || "");
-  bindText("subject", docData.subject || "");
-  bindText("purpose", docData.purpose || "");
-  bindText("approval", docData.approval || "");
-  bindText("notes", docData.notes || "");
-  bindText("total", docData.total || "");
-
-  els.doc.innerHTML = "";
-  els.doc.appendChild(frag);
-}
-
-function buildTemplateDoc(payload) {
-  const total = payload.quote.total ? fmtMoney(payload.quote.total) : fmtMoney(computeTotal(payload.quote.items || []) || "");
-
-  return {
-    subject: payload.meta.subject,
-    approvalNo: payload.meta.approvalNo,
-    docDate: payload.meta.docDate,
-    purpose: payload.meta.purpose?.trim() ? payload.meta.purpose.trim() : buildOfficialOutline(payload),
-    notes: payload.meta.notes || "-",
-    approval:
-      "상기 목적 달성을 위해 견적 내역과 같이 구매/결제를 진행하고자 하오니 검토 후 결재를 요청드립니다.\n" +
-      "집행 기준 및 예산 범위 내에서 진행 예정입니다.",
-    total: total ? `${total} 원` : "",
-  };
-}
-
-async function callGenerateApi(payload) {
-  const res = await fetch("/api/generate", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ payload }),
-  });
-
-  const txt = await res.text();
-  let data;
-  try {
-    data = JSON.parse(txt);
-  } catch {
-    throw new Error(`API 응답 파싱 실패: ${txt.slice(0, 200)}`);
-  }
-  if (!res.ok) throw new Error(data?.error || `API 오류 (HTTP ${res.status})`);
-  return data;
-}
-
 function setBusy(busy) {
   const b = Boolean(busy);
   els.btnExtract.disabled = b;
-  els.btnGenerate.disabled = b;
-  els.btnCopy.disabled = b;
-  els.btnPrint.disabled = b;
   els.btnCopyPurpose.disabled = b;
   els.btnAutoOutline.disabled = b;
 }
@@ -476,11 +409,7 @@ function setBusy(busy) {
 async function onAutoOutline() {
   const payload = toDocPayload();
   if (!payload.meta.subject) {
-    setStatus("제목을 먼저 입력하세요.");
-    return;
-  }
-  if ((!payload.quote.items || payload.quote.items.length === 0) && !payload.quote.rawText) {
-    setStatus("견적서 파일 업로드/추출 후 진행하세요.");
+    alert("제목을 먼저 입력하세요.");
     return;
   }
 
@@ -535,60 +464,9 @@ async function onExtract() {
   }
 }
 
-async function onGenerate() {
-  const payload = toDocPayload();
-  const errs = validateForGenerate(payload);
-  if (errs.length) {
-    setStatus(errs.join(" "));
-    return;
-  }
-
-  setBusy(true);
-  setStatus("품의서 생성 중...");
-  try {
-    // If outline is empty, generate it first.
-    if (!els.purpose.value.trim()) {
-      try {
-        const o = await callOutlineApi(payload);
-        const outline = String(o?.outline || "").trim();
-        if (outline) els.purpose.value = outline;
-      } catch {
-        els.purpose.value = buildOfficialOutline(payload);
-      }
-    }
-
-    // Rebuild payload with the newly generated outline.
-    const payload2 = toDocPayload();
-    const data = await callGenerateApi(payload);
-    renderDocFromTemplate(data.document);
-    setStatus(data.mode === "ai" ? "AI로 품의서가 생성되었습니다." : "품의서가 생성되었습니다.");
-  } catch (e) {
-    console.error(e);
-    const doc = buildTemplateDoc(toDocPayload());
-    renderDocFromTemplate(doc);
-    setStatus(`AI 연결 문제로 기본 양식으로 생성했습니다: ${e?.message || String(e)}`);
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function onCopyDoc() {
-  const text = els.doc.innerText.trim();
-  if (!text) {
-    setStatus("복사할 문서가 없습니다.");
-    return;
-  }
-  const ok = await copyText(text);
-  setStatus(ok ? "문서가 복사되었습니다." : "복사에 실패했습니다.");
-}
-
 async function onCopyPurpose() {
   const ok = await copyText(els.purpose.value);
   setStatus(ok ? "개요가 복사되었습니다." : "복사에 실패했습니다.");
-}
-
-function onPrint() {
-  window.print();
 }
 
 function setNavOpen(open) {
@@ -599,19 +477,23 @@ function setNavOpen(open) {
 
 function init() {
   els.docDate.value = els.docDate.value || todayISO();
-  setStatus("파일 업로드 후 추출하고, 품의서 생성을 진행하세요.");
+  setStatus("ready");
 
   els.btnExtract.addEventListener("click", onExtract);
-  els.btnGenerate.addEventListener("click", onGenerate);
-  els.btnCopy.addEventListener("click", onCopyDoc);
   els.btnAutoOutline.addEventListener("click", onAutoOutline);
   els.btnCopyPurpose.addEventListener("click", onCopyPurpose);
-  els.btnPrint.addEventListener("click", onPrint);
+
+  // 제목만 입력하면 개요 자동 생성 (개요가 비어 있을 때만)
+  els.subject.addEventListener("blur", async () => {
+    if (!els.subject.value.trim()) return;
+    if (els.purpose.value.trim()) return;
+    await onAutoOutline();
+  });
 
   els.file.addEventListener("change", () => {
     const f = els.file.files?.[0];
     if (!f) {
-      els.fileHint.textContent = "지원: .xlsx, .pdf";
+      els.fileHint.textContent = "지원: .xls, .xlsx, .pdf";
       return;
     }
     const kb = Math.max(1, Math.round(f.size / 1024));
