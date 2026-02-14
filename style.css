@@ -246,7 +246,10 @@ body.nav-open .scrim {
 
 /* Header */
 .top {
-  padding: 18px 0 0;
+  padding: 16px 0 4px;
+  background:
+    radial-gradient(900px 280px at 10% 0%, rgba(233, 246, 228, 0.85), rgba(255, 255, 255, 0) 60%),
+    radial-gradient(740px 260px at 90% 0%, rgba(37, 99, 235, 0.10), rgba(255, 255, 255, 0) 60%);
 }
 
 .top-inner {
@@ -254,8 +257,8 @@ body.nav-open .scrim {
   margin: 0 auto;
   padding: 0 18px;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 14px;
 }
 
 .nav-toggle {
@@ -274,6 +277,12 @@ body.nav-open .scrim {
   flex: 0 0 auto;
 }
 
+.nav-toggle:hover {
+  box-shadow: 0 12px 26px rgba(17, 24, 39, 0.12);
+  transform: translateY(-1px);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
 .nav-toggle .bar {
   width: 18px;
   height: 2px;
@@ -281,16 +290,43 @@ body.nav-open .scrim {
   border-radius: 99px;
 }
 
+.hero {
+  display: grid;
+  gap: 4px;
+}
+
+.hero-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .title {
   margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.2px;
+  font-size: 26px;
+  letter-spacing: -0.4px;
+  font-weight: 900;
 }
 
 .subtitle {
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  background: rgba(37, 99, 235, 0.08);
+  color: rgba(29, 78, 216, 0.95);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
 }
 
 /* Page layout */
@@ -298,6 +334,32 @@ body.nav-open .scrim {
   max-width: 1180px;
   margin: 0 auto;
   padding: 12px 18px 48px;
+}
+
+.footer {
+  border-top: 1px solid var(--line);
+  background: #fff;
+}
+
+.footer-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 18px 26px;
+  color: rgba(17, 24, 39, 0.62);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.footer-title {
+  font-weight: 900;
+  color: rgba(17, 24, 39, 0.72);
+}
+
+.footer-copy {
+  text-align: right;
 }
 
 .guide {
@@ -755,6 +817,14 @@ body.nav-open .scrim {
   }
   .page {
     padding: 12px 14px 40px;
+  }
+  .footer-inner {
+    padding: 16px 14px 22px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .footer-copy {
+    text-align: left;
   }
   .guide {
     grid-template-columns: 1fr;
