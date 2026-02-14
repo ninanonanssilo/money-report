@@ -440,6 +440,12 @@ body.nav-open .scrim {
   align-items: end;
 }
 
+.textarea-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
 .file {
   border: 1px solid #d1d5db;
   border-radius: 6px;
@@ -493,6 +499,12 @@ body.nav-open .scrim {
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.pill-primary {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.08);
+  color: rgba(29, 78, 216, 0.95);
 }
 
 .status {

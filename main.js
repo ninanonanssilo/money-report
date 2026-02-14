@@ -20,6 +20,7 @@ const els = {
   btnGenerate: $("btn-generate"),
   btnPrint: $("btn-print"),
   btnCopy: $("btn-copy"),
+  btnAutoOutline: $("btn-auto-outline"),
   btnCopyPurpose: $("btn-copy-purpose"),
 
   status: $("status"),
@@ -345,9 +346,26 @@ function validateForGenerate(payload) {
   const errs = [];
   if (!payload.meta.subject) errs.push("제목을 입력하세요.");
   if (!payload.meta.docDate) errs.push("작성일을 입력하세요.");
-  if (!payload.meta.purpose) errs.push("개요를 입력하세요.");
   if ((!payload.quote.items || payload.quote.items.length === 0) && !payload.quote.rawText) errs.push("견적서 파일을 업로드하세요.");
   return errs;
+}
+
+async function callOutlineApi(payload) {
+  const res = await fetch("/api/outline", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ payload }),
+  });
+
+  const txt = await res.text();
+  let data;
+  try {
+    data = JSON.parse(txt);
+  } catch {
+    throw new Error(`API 응답 파싱 실패: ${txt.slice(0, 200)}`);
+  }
+  if (!res.ok) throw new Error(data?.error || `API 오류 (HTTP ${res.status})`);
+  return data;
 }
 
 function buildOfficialOutline(payload) {
@@ -423,7 +441,7 @@ function buildTemplateDoc(payload) {
     fiscalYear: payload.meta.fiscalYear,
     approvalNo: payload.meta.approvalNo,
     docDate: payload.meta.docDate,
-    purpose: buildOfficialOutline(payload),
+    purpose: payload.meta.purpose?.trim() ? payload.meta.purpose.trim() : buildOfficialOutline(payload),
     notes: payload.meta.notes || "-",
     approval:
       "상기 목적 달성을 위해 견적 내역과 같이 구매/결제를 진행하고자 하오니 검토 후 결재를 요청드립니다.\n" +
@@ -457,6 +475,36 @@ function setBusy(busy) {
   els.btnCopy.disabled = b;
   els.btnPrint.disabled = b;
   els.btnCopyPurpose.disabled = b;
+  els.btnAutoOutline.disabled = b;
+}
+
+async function onAutoOutline() {
+  const payload = toDocPayload();
+  if (!payload.meta.subject) {
+    setStatus("제목을 먼저 입력하세요.");
+    return;
+  }
+  if ((!payload.quote.items || payload.quote.items.length === 0) && !payload.quote.rawText) {
+    setStatus("견적서 파일 업로드/추출 후 진행하세요.");
+    return;
+  }
+
+  setBusy(true);
+  setStatus("개요 자동 생성 중...");
+  try {
+    const data = await callOutlineApi(payload);
+    const outline = String(data?.outline || "").trim();
+    if (!outline) throw new Error("개요 생성 결과가 비어 있습니다.");
+    els.purpose.value = outline;
+    setStatus(data.mode === "ai" ? "AI로 개요가 생성되었습니다." : "개요가 생성되었습니다.");
+  } catch (e) {
+    console.error(e);
+    // Fallback to deterministic outline
+    els.purpose.value = buildOfficialOutline(payload);
+    setStatus(`AI 연결 문제로 기본 개요로 채웠습니다: ${e?.message || String(e)}`);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function onExtract() {
@@ -550,6 +598,7 @@ function init() {
   els.btnExtract.addEventListener("click", onExtract);
   els.btnGenerate.addEventListener("click", onGenerate);
   els.btnCopy.addEventListener("click", onCopyDoc);
+  els.btnAutoOutline.addEventListener("click", onAutoOutline);
   els.btnCopyPurpose.addEventListener("click", onCopyPurpose);
   els.btnPrint.addEventListener("click", onPrint);
 
