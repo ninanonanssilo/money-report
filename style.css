@@ -514,6 +514,7 @@ body.nav-open .scrim {
 .form-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed; /* prevent fixed-width label column from forcing horizontal overflow */
 }
 
 .form-table th,
@@ -521,6 +522,7 @@ body.nav-open .scrim {
   border-bottom: 1px solid var(--line);
   padding: 10px 10px;
   vertical-align: middle;
+  min-width: 0;
 }
 
 .form-table th {
@@ -530,6 +532,7 @@ body.nav-open .scrim {
   color: #2f5f2f;
   font-weight: 800;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .form-table tr:last-child th,
@@ -551,6 +554,61 @@ body.nav-open .scrim {
 .hint {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Responsive: turn the table-form into a 1-column stacked form on small screens.
+   Fixes iOS/viewport clipping and "label column keeps eating width" issues. */
+@media (max-width: 820px) {
+  .form-wrap {
+    overflow: visible;
+  }
+
+  .form-wrap .form-table,
+  .form-wrap .form-table tbody,
+  .form-wrap .form-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .form-wrap .form-table tr {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    padding: 12px 0;
+  }
+
+  .form-wrap .form-table tr:last-child {
+    border-bottom: 0;
+  }
+
+  .form-wrap .form-table th {
+    display: block;
+    width: 100%;
+    padding: 0 0 8px 0;
+    background: transparent;
+    border-right: 0;
+    border-bottom: 0;
+    color: rgba(17, 24, 39, 0.82);
+    white-space: normal;
+    text-align: left;
+  }
+
+  .form-wrap .form-table td {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  /* File input + button rows: stack cleanly on narrow viewports */
+  .form-wrap .form-table td .row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .form-wrap .form-table td .row > * {
+    width: 100%;
+  }
 }
 
 .input,
