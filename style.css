@@ -614,23 +614,6 @@ body.nav-open .scrim {
   margin: 4px 0 12px;
 }
 
-.doc-official-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  font-size: 13px;
-  padding: 0 2px 8px;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.55);
-  margin-bottom: 0;
-}
-
-.doc-official-top .k {
-  color: rgba(17, 24, 39, 0.72);
-  font-weight: 700;
-  margin-right: 6px;
-}
-
 .doc-official-table {
   width: 100%;
   border-collapse: collapse;

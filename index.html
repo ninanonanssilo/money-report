@@ -117,18 +117,6 @@
                 </td>
               </tr>
               <tr>
-                <th scope="row">회계연도</th>
-                <td>
-                  <input id="fiscalYear" class="input" type="text" inputmode="numeric" placeholder="예: 2026" />
-                </td>
-              </tr>
-              <tr>
-                <th scope="row">품의번호</th>
-                <td>
-                  <input id="approvalNo" class="input" type="text" placeholder="예: 2022R100006275200375" />
-                </td>
-              </tr>
-              <tr>
                 <th scope="row">작성일</th>
                 <td>
                   <input id="docDate" class="input" type="date" />
@@ -138,7 +126,7 @@
                 <th scope="row">품의개요</th>
                 <td>
                   <div class="textarea-row">
-                    <textarea id="purpose" class="textarea" rows="6" placeholder="예: 프로젝트 운영을 위한 필수 라이선스 확보"></textarea>
+                    <textarea id="purpose" class="textarea" rows="6" placeholder="제목만 입력해도 자동 생성됩니다. (원하면 수정/추가 가능)"></textarea>
                     <div class="textarea-actions">
                       <button id="btn-auto-outline" class="pill pill-primary" type="button">개요 자동생성</button>
                       <button id="btn-copy-purpose" class="pill" type="button">내용복사</button>
@@ -202,11 +190,6 @@
     <template id="docTemplate">
       <section class="doc-page doc-official">
         <div class="doc-official-title">지출 품의서</div>
-
-        <div class="doc-official-top">
-          <div class="left"><span class="k">회계연도 :</span> <span data-bind="fiscalYear"></span>년</div>
-          <div class="right"><span class="k">품의번호</span> <span data-bind="approvalNo"></span></div>
-        </div>
 
         <table class="doc-official-table" aria-label="지출 품의서">
           <tbody>

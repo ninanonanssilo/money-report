@@ -10,7 +10,6 @@ const els = {
   fileHint: $("file-hint"),
 
   subject: $("subject"),
-  fiscalYear: $("fiscalYear"),
   approvalNo: $("approvalNo"),
   docDate: $("docDate"),
   purpose: $("purpose"),
@@ -326,7 +325,6 @@ function toDocPayload() {
   return {
     meta: {
       subject: els.subject.value.trim(),
-      fiscalYear: els.fiscalYear.value.trim(),
       approvalNo: els.approvalNo.value.trim(),
       docDate: (els.docDate.value || "").trim(),
       purpose: els.purpose.value.trim(),
@@ -345,8 +343,7 @@ function toDocPayload() {
 function validateForGenerate(payload) {
   const errs = [];
   if (!payload.meta.subject) errs.push("제목을 입력하세요.");
-  if (!payload.meta.docDate) errs.push("작성일을 입력하세요.");
-  if ((!payload.quote.items || payload.quote.items.length === 0) && !payload.quote.rawText) errs.push("견적서 파일을 업로드하세요.");
+  // Allow generating even without a quote; we won't invent numbers and will mark unknowns as '미기재'.
   return errs;
 }
 
@@ -420,7 +417,6 @@ function renderDocFromTemplate(docData) {
     if (el) el.textContent = val ?? "";
   };
 
-  bindText("fiscalYear", docData.fiscalYear || "");
   bindText("approvalNo", docData.approvalNo || "");
   bindText("docDate", docData.docDate || "");
   bindText("subject", docData.subject || "");
@@ -438,7 +434,6 @@ function buildTemplateDoc(payload) {
 
   return {
     subject: payload.meta.subject,
-    fiscalYear: payload.meta.fiscalYear,
     approvalNo: payload.meta.approvalNo,
     docDate: payload.meta.docDate,
     purpose: payload.meta.purpose?.trim() ? payload.meta.purpose.trim() : buildOfficialOutline(payload),
@@ -551,12 +546,25 @@ async function onGenerate() {
   setBusy(true);
   setStatus("품의서 생성 중...");
   try {
+    // If outline is empty, generate it first.
+    if (!els.purpose.value.trim()) {
+      try {
+        const o = await callOutlineApi(payload);
+        const outline = String(o?.outline || "").trim();
+        if (outline) els.purpose.value = outline;
+      } catch {
+        els.purpose.value = buildOfficialOutline(payload);
+      }
+    }
+
+    // Rebuild payload with the newly generated outline.
+    const payload2 = toDocPayload();
     const data = await callGenerateApi(payload);
     renderDocFromTemplate(data.document);
     setStatus(data.mode === "ai" ? "AI로 품의서가 생성되었습니다." : "품의서가 생성되었습니다.");
   } catch (e) {
     console.error(e);
-    const doc = buildTemplateDoc(payload);
+    const doc = buildTemplateDoc(toDocPayload());
     renderDocFromTemplate(doc);
     setStatus(`AI 연결 문제로 기본 양식으로 생성했습니다: ${e?.message || String(e)}`);
   } finally {
@@ -591,8 +599,6 @@ function setNavOpen(open) {
 
 function init() {
   els.docDate.value = els.docDate.value || todayISO();
-  const y = new Date().getFullYear();
-  els.fiscalYear.value = els.fiscalYear.value || String(y);
   setStatus("파일 업로드 후 추출하고, 품의서 생성을 진행하세요.");
 
   els.btnExtract.addEventListener("click", onExtract);
