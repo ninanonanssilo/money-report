@@ -65,7 +65,6 @@ function buildTemplateDoc(payload) {
 
   return {
     subject: clamp(meta.subject || "", 120),
-    department: clamp(meta.department || "", 80),
     requester: clamp(meta.requester || "", 40),
     docDate: clamp(meta.docDate || "", 20),
     purpose: clamp(meta.purpose || "", 2000),
@@ -86,7 +85,6 @@ function buildPrompt(payload) {
   const safe = {
     meta: {
       subject: clamp(meta.subject, 120),
-      department: clamp(meta.department, 80),
       requester: clamp(meta.requester, 40),
       docDate: clamp(meta.docDate, 20),
       purpose: clamp(meta.purpose, 2000),
@@ -112,7 +110,6 @@ function buildPrompt(payload) {
     "Return ONLY valid JSON matching this schema:",
     "{",
     '  "subject": string,',
-    '  "department": string,',
     '  "requester": string,',
     '  "docDate": string,',
     '  "purpose": string,',
@@ -175,7 +172,6 @@ async function callOpenAI({ apiKey, payload }) {
 
   // Very light validation/sanitization.
   doc.subject = clamp(doc.subject, 120);
-  doc.department = clamp(doc.department, 80);
   doc.requester = clamp(doc.requester, 40);
   doc.docDate = clamp(doc.docDate, 20);
   doc.purpose = clamp(doc.purpose, 3000);

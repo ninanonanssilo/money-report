@@ -5,7 +5,6 @@ const els = {
   fileHint: $("file-hint"),
 
   subject: $("subject"),
-  department: $("department"),
   requester: $("requester"),
   docDate: $("docDate"),
   purpose: $("purpose"),
@@ -260,7 +259,6 @@ function toDocPayload() {
   return {
     meta: {
       subject: els.subject.value.trim(),
-      department: els.department.value.trim(),
       requester: els.requester.value.trim(),
       docDate: (els.docDate.value || "").trim(),
       purpose: els.purpose.value.trim(),
@@ -280,7 +278,6 @@ function toDocPayload() {
 function validateForGenerate(payload) {
   const errs = [];
   if (!payload.meta.subject) errs.push("제목을 입력하세요.");
-  if (!payload.meta.department) errs.push("부서를 입력하세요.");
   if (!payload.meta.requester) errs.push("기안자를 입력하세요.");
   if (!payload.meta.docDate) errs.push("작성일을 입력하세요.");
   if (!payload.meta.purpose) errs.push("목적/배경을 입력하세요.");
@@ -301,7 +298,6 @@ function renderDocFromTemplate(docData) {
   };
 
   bindText("docDate", docData.docDate || "");
-  bindText("department", docData.department || "");
   bindText("requester", docData.requester || "");
   bindText("subject", docData.subject || "");
   bindText("purpose", docData.purpose || "");
@@ -341,7 +337,6 @@ function buildTemplateDoc(payload) {
 
   return {
     subject: payload.meta.subject,
-    department: payload.meta.department,
     requester: payload.meta.requester,
     docDate: payload.meta.docDate,
     purpose: payload.meta.purpose,
