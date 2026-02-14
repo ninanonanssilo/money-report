@@ -649,6 +649,28 @@ body.nav-open .scrim {
   }
 }
 
+/* Item table (순번/내용/규격/수량/단가/금액): mobile spacing */
+@media (max-width: 820px) {
+  .table-wrap .table th,
+  .table-wrap .table td {
+    padding: 12px 10px;
+    line-height: 1.4;
+    font-size: 14px;
+  }
+
+  .table-wrap .table th {
+    text-align: center;
+  }
+
+  .table-wrap .table th + th {
+    border-left: 1px solid rgba(0, 0, 0, 0.08);
+  }
+
+  .table-wrap .table thead th {
+    background: rgba(47, 95, 47, 0.06);
+  }
+}
+
 .input,
 .textarea {
   width: min(720px, 100%);
