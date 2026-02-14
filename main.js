@@ -11,6 +11,7 @@ const els = {
 
   subject: $("subject"),
   fiscalYear: $("fiscalYear"),
+  approvalNo: $("approvalNo"),
   docDate: $("docDate"),
   purpose: $("purpose"),
   notes: $("notes"),
@@ -55,6 +56,63 @@ function fmtMoney(v) {
   const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, ""));
   if (!Number.isFinite(n)) return String(v);
   return new Intl.NumberFormat("ko-KR").format(n);
+}
+
+function hasBatchim(s) {
+  const t = String(s || "").trim();
+  if (!t) return false;
+  const ch = t.charCodeAt(t.length - 1);
+  if (ch < 0xac00 || ch > 0xd7a3) return false;
+  return (ch - 0xac00) % 28 !== 0;
+}
+
+function josa(word, a, b) {
+  // Choose particle based on 받침 여부.
+  return hasBatchim(word) ? a : b;
+}
+
+function numToKorean(n) {
+  // Sino-Korean number words (good enough for currency amounts).
+  const units = ["", "만", "억", "조", "경"];
+  const digits = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+  const small = ["", "십", "백", "천"];
+
+  const num = Math.floor(Number(n));
+  if (!Number.isFinite(num) || num <= 0) return "";
+
+  const chunk = (x) => {
+    let out = "";
+    const ds = String(x).padStart(4, "0").split("").map((c) => Number(c));
+    for (let i = 0; i < 4; i++) {
+      const d = ds[i];
+      if (!d) continue;
+      const pos = 3 - i;
+      out += (d === 1 && pos > 0 ? "" : digits[d]) + small[pos];
+    }
+    return out;
+  };
+
+  let x = num;
+  let i = 0;
+  let out = "";
+  while (x > 0 && i < units.length) {
+    const part = x % 10000;
+    if (part) {
+      const c = chunk(part);
+      out = c + units[i] + out;
+    }
+    x = Math.floor(x / 10000);
+    i++;
+  }
+  return out;
+}
+
+function numToKoreanWon(n) {
+  const intN = Math.floor(Number(n));
+  if (!Number.isFinite(intN) || intN <= 0) return "";
+  const words = numToKorean(intN);
+  if (!words) return "";
+  return `금${words}원`;
 }
 
 function escapeHtml(s) {
@@ -268,6 +326,7 @@ function toDocPayload() {
     meta: {
       subject: els.subject.value.trim(),
       fiscalYear: els.fiscalYear.value.trim(),
+      approvalNo: els.approvalNo.value.trim(),
       docDate: (els.docDate.value || "").trim(),
       purpose: els.purpose.value.trim(),
       notes: els.notes.value.trim(),
@@ -314,18 +373,23 @@ function buildOfficialOutline(payload) {
     })
     .filter(Boolean);
 
-  const basis = lines.length ? lines.join("\n") : total ? `${fmtMoney(total)}원` : "미기재";
-
   const purpose = payload?.meta?.purpose?.trim();
-  const purposeLine = purpose ? purpose.replace(/\s+/g, " ").slice(0, 120) : "미기재";
+  const purposeLine = purpose ? purpose.replace(/\s+/g, " ").slice(0, 160) : "미기재";
   const totalLine = total ? `${fmtMoney(total)}원` : "미기재";
+  const totalWords = Number.isFinite(total) ? numToKoreanWon(total) : "";
 
-  // Match Edufine-style outline format from the provided screenshot.
+  const subject = String(payload?.meta?.subject || "").trim() || "미기재";
+  const buySentence = `${subject}${josa(subject, "을", "를")} 다음과 같이 구입하고자 합니다.`;
+
+  const basisLine = lines.length ? lines.join(" / ") : total ? `${fmtMoney(total)}원` : "미기재";
+
   return (
-    "1. 다음과 같이 구입하고자 합니다.\n" +
-    "가. 내용\n\n" +
-    `  1) 구입품목: ${itemLine}\n` +
-    `  2) 구입예산: ${totalLine}\n`
+    `${buySentence}\n` +
+    `1. 목적: ${purposeLine}\n` +
+    `2. 품명: ${itemLine}\n` +
+    `3. 소요 예산: 금${totalLine}${totalWords ? `(${totalWords})` : ""}\n` +
+    `4. 산출 근거: ${basisLine}\n\n` +
+    "붙임 지출품의서 1부. 끝."
   );
 }
 
@@ -339,6 +403,7 @@ function renderDocFromTemplate(docData) {
   };
 
   bindText("fiscalYear", docData.fiscalYear || "");
+  bindText("approvalNo", docData.approvalNo || "");
   bindText("docDate", docData.docDate || "");
   bindText("subject", docData.subject || "");
   bindText("purpose", docData.purpose || "");
@@ -356,6 +421,7 @@ function buildTemplateDoc(payload) {
   return {
     subject: payload.meta.subject,
     fiscalYear: payload.meta.fiscalYear,
+    approvalNo: payload.meta.approvalNo,
     docDate: payload.meta.docDate,
     purpose: buildOfficialOutline(payload),
     notes: payload.meta.notes || "-",

@@ -123,6 +123,12 @@
                 </td>
               </tr>
               <tr>
+                <th scope="row">품의번호</th>
+                <td>
+                  <input id="approvalNo" class="input" type="text" placeholder="예: 2022R100006275200375" />
+                </td>
+              </tr>
+              <tr>
                 <th scope="row">작성일</th>
                 <td>
                   <input id="docDate" class="input" type="date" />
@@ -196,7 +202,7 @@
 
         <div class="doc-official-top">
           <div class="left"><span class="k">회계연도 :</span> <span data-bind="fiscalYear"></span>년</div>
-          <div class="right"></div>
+          <div class="right"><span class="k">품의번호</span> <span data-bind="approvalNo"></span></div>
         </div>
 
         <table class="doc-official-table" aria-label="지출 품의서">

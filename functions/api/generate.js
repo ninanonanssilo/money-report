@@ -66,6 +66,7 @@ function buildTemplateDoc(payload) {
   return {
     subject: clamp(meta.subject || "", 120),
     fiscalYear: clamp(meta.fiscalYear || "", 10),
+    approvalNo: clamp(meta.approvalNo || "", 40),
     docDate: clamp(meta.docDate || "", 20),
     purpose: clamp(meta.purpose || "", 2000),
     notes: clamp(meta.notes || "-", 1200) || "-",
@@ -85,6 +86,8 @@ function buildPrompt(payload) {
   const safe = {
     meta: {
       subject: clamp(meta.subject, 120),
+      fiscalYear: clamp(meta.fiscalYear, 10),
+      approvalNo: clamp(meta.approvalNo, 40),
       docDate: clamp(meta.docDate, 20),
       purpose: clamp(meta.purpose, 2000),
       notes: clamp(meta.notes, 1200),
@@ -108,6 +111,8 @@ function buildPrompt(payload) {
     "Return ONLY valid JSON matching this schema:",
     "{",
     '  "subject": string,',
+    '  "fiscalYear": string,',
+    '  "approvalNo": string,',
     '  "docDate": string,',
     '  "purpose": string,',
     '  "approval": string,',
@@ -169,6 +174,8 @@ async function callOpenAI({ apiKey, payload }) {
 
   // Very light validation/sanitization.
   doc.subject = clamp(doc.subject, 120);
+  doc.fiscalYear = clamp(doc.fiscalYear, 10);
+  doc.approvalNo = clamp(doc.approvalNo, 40);
   doc.docDate = clamp(doc.docDate, 20);
   doc.purpose = clamp(doc.purpose, 3000);
   doc.approval = clamp(doc.approval, 3000);
@@ -209,6 +216,8 @@ export async function onRequestPost(context) {
     // Ensure user-entered meta flows through even if the model omits it.
     const fy = payload?.meta?.fiscalYear;
     if (fy && !document.fiscalYear) document.fiscalYear = clamp(fy, 10);
+    const an = payload?.meta?.approvalNo;
+    if (an && !document.approvalNo) document.approvalNo = clamp(an, 40);
     return jsonResponse({ mode: "ai", document }, { headers: okCors() });
   } catch (e) {
     // Avoid leaking secrets; return generic error.
