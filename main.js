@@ -310,6 +310,11 @@ async function ocrPdfToText(file, { maxPages, scale, lang, onProgress }) {
   const tesseract = await loadTesseract();
   const pdfjs = await loadPdfJs();
 
+  // Make OCR asset locations explicit so it works reliably on static hosting.
+  const workerPath = "https://unpkg.com/tesseract.js@5/dist/worker.min.js";
+  const corePath = "https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js";
+  const langPath = "https://tessdata.projectnaptha.com/4.0.0_best";
+
   const ab = await file.arrayBuffer();
   const pdfDoc = await pdfjs.getDocument({ data: ab }).promise;
 
@@ -327,6 +332,9 @@ async function ocrPdfToText(file, { maxPages, scale, lang, onProgress }) {
     ctx.putImageData(img, 0, 0);
 
     const { data } = await tesseract.recognize(canvas, lang || "kor+eng", {
+      workerPath,
+      corePath,
+      langPath,
       logger: (m) => {
         if (m?.status === "recognizing text") {
           const pct = Math.round((m.progress || 0) * 100);

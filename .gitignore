@@ -5,3 +5,6 @@
 *.key
 .wrangler/
 node_modules/
+firebase-debug.log
+assets/vendor/
+견적서 - 11번가.pdf

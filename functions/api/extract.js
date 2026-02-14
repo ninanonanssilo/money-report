@@ -173,23 +173,61 @@ function buildPrompt({ source, filename, rows, rawText }) {
   return { instructions, safe };
 }
 
-async function callOpenAI({ apiKey, source, filename, rows, rawText }) {
+async function callOpenAI({ apiKey, model, source, filename, rows, rawText }) {
   const { instructions, safe } = buildPrompt({ source, filename, rows, rawText });
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const useModel = (asString(model).trim() || "gpt-5").trim();
+
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            name: { type: "string" },
+            spec: { type: "string" },
+            qty: { anyOf: [{ type: "number" }, { type: "null" }] },
+            unitPrice: { anyOf: [{ type: "number" }, { type: "null" }] },
+            amount: { anyOf: [{ type: "number" }, { type: "null" }] },
+            note: { type: "string" },
+          },
+          required: ["name", "spec", "qty", "unitPrice", "amount", "note"],
+        },
+      },
+      total: { anyOf: [{ type: "number" }, { type: "null" }] },
+    },
+    required: ["items", "total"],
+  };
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: useModel,
       temperature: 0.1,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: instructions },
-        { role: "user", content: JSON.stringify(safe) },
+      instructions,
+      input: [
+        {
+          role: "user",
+          content: [{ type: "input_text", text: JSON.stringify(safe) }],
+        },
       ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "extract_items",
+          description: "Extract estimate line items and totals as strict JSON.",
+          schema,
+          strict: true,
+        },
+      },
     }),
   });
 
@@ -205,7 +243,14 @@ async function callOpenAI({ apiKey, source, filename, rows, rawText }) {
     throw new Error(msg);
   }
 
-  const content = data?.choices?.[0]?.message?.content;
+  const content =
+    data?.output_text ||
+    (Array.isArray(data?.output)
+      ? data.output
+          .flatMap((o) => (o?.content || []).filter((c) => c?.type === "output_text").map((c) => c.text))
+          .filter(Boolean)
+          .join("\n")
+      : "");
   if (!content) throw new Error("OpenAI 응답 content가 비어 있습니다.");
 
   let out;
@@ -244,11 +289,11 @@ export async function onRequestPost(context) {
       return jsonResponse({ mode: "none", items: [], total: null }, { headers: okCors() });
     }
 
-    const ai = await callOpenAI({ apiKey, source, filename, rows, rawText });
+    const model = context.env?.OPENAI_MODEL;
+    const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText });
     return jsonResponse({ mode: "ai", items: ai.items, total: ai.total }, { headers: okCors() });
   } catch (e) {
     const msg = e?.message ? String(e.message) : "unknown error";
     return jsonResponse({ error: msg }, { status: 500, headers: okCors() });
   }
 }
-
