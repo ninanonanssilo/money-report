@@ -275,24 +275,26 @@ export async function onRequestPost(context) {
     const filename = body?.filename || "";
     const rows = body?.rows || null;
     const rawText = body?.rawText || "";
+    const rev = context.env?.CF_PAGES_COMMIT_SHA || null;
 
     // 1) Deterministic extraction first (works without AI key).
     const deterministic = extractFromRows(rows || []);
     if (deterministic.items.length >= 1) {
-      return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total }, { headers: okCors() });
+      return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total, rev }, { headers: okCors() });
     }
 
     // 2) AI-assisted extraction if configured.
     const apiKey = context.env?.OPENAI_API_KEY;
     if (!apiKey) {
-      return jsonResponse({ mode: "none", items: [], total: null }, { headers: okCors() });
+      return jsonResponse({ mode: "none", items: [], total: null, rev }, { headers: okCors() });
     }
 
     const model = context.env?.OPENAI_MODEL;
     const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText });
-    return jsonResponse({ mode: "ai", items: ai.items, total: ai.total }, { headers: okCors() });
+    return jsonResponse({ mode: "ai", items: ai.items, total: ai.total, rev }, { headers: okCors() });
   } catch (e) {
     const msg = e?.message ? String(e.message) : "unknown error";
-    return jsonResponse({ error: msg }, { status: 500, headers: okCors() });
+    const rev = context.env?.CF_PAGES_COMMIT_SHA || null;
+    return jsonResponse({ error: msg, rev }, { status: 500, headers: okCors() });
   }
 }
