@@ -65,6 +65,7 @@ function buildTemplateDoc(payload) {
 
   return {
     subject: clamp(meta.subject || "", 120),
+    fiscalYear: clamp(meta.fiscalYear || "", 10),
     docDate: clamp(meta.docDate || "", 20),
     purpose: clamp(meta.purpose || "", 2000),
     notes: clamp(meta.notes || "-", 1200) || "-",
@@ -89,7 +90,6 @@ function buildPrompt(payload) {
       notes: clamp(meta.notes, 1200),
     },
     quote: {
-      vendor: clamp(quote.vendor, 120),
       currency: "KRW",
       total: Number.isFinite(quote.total) ? quote.total : null,
       items: items.slice(0, 80).map((it) => ({
@@ -117,7 +117,7 @@ function buildPrompt(payload) {
     "}",
     "Rules:",
     "- Use polite, formal Korean (공문서/품의서 톤).",
-    "- Do not invent vendor or numbers not supported; if unknown, leave blank or write '미기재'.",
+    "- Do not invent entities or numbers not supported; if unknown, leave blank or write '미기재'.",
     "- Ensure totals align with items when possible.",
     "- Keep it concise but complete for approval.",
   ].join("\n");
@@ -206,6 +206,9 @@ export async function onRequestPost(context) {
     }
 
     const document = await callOpenAI({ apiKey, payload });
+    // Ensure user-entered meta flows through even if the model omits it.
+    const fy = payload?.meta?.fiscalYear;
+    if (fy && !document.fiscalYear) document.fiscalYear = clamp(fy, 10);
     return jsonResponse({ mode: "ai", document }, { headers: okCors() });
   } catch (e) {
     // Avoid leaking secrets; return generic error.

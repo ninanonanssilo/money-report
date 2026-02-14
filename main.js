@@ -10,6 +10,7 @@ const els = {
   fileHint: $("file-hint"),
 
   subject: $("subject"),
+  fiscalYear: $("fiscalYear"),
   docDate: $("docDate"),
   purpose: $("purpose"),
   notes: $("notes"),
@@ -266,6 +267,7 @@ function toDocPayload() {
   return {
     meta: {
       subject: els.subject.value.trim(),
+      fiscalYear: els.fiscalYear.value.trim(),
       docDate: (els.docDate.value || "").trim(),
       purpose: els.purpose.value.trim(),
       notes: els.notes.value.trim(),
@@ -289,6 +291,44 @@ function validateForGenerate(payload) {
   return errs;
 }
 
+function buildOfficialOutline(payload) {
+  const items = payload?.quote?.items || [];
+  const total = payload?.quote?.total ?? computeTotal(items) ?? null;
+
+  const itemNames = items
+    .map((it) => String(it?.name || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const itemLine = itemNames.length ? itemNames.join(", ") + (items.length > itemNames.length ? " 등" : "") : "미기재";
+
+  const lines = items
+    .filter((it) => it && (it.amount || (Number.isFinite(it.qty) && Number.isFinite(it.unitPrice))))
+    .slice(0, 6)
+    .map((it) => {
+      const qty = Number.isFinite(it.qty) ? it.qty : null;
+      const unit = Number.isFinite(it.unitPrice) ? it.unitPrice : null;
+      const amt = Number.isFinite(it.amount) ? it.amount : qty !== null && unit !== null ? qty * unit : null;
+      if (qty !== null && unit !== null && amt !== null) return `${fmtMoney(unit)}원 X ${fmtMoney(qty)}개 = ${fmtMoney(amt)}원`;
+      if (amt !== null) return `${fmtMoney(amt)}원`;
+      return "";
+    })
+    .filter(Boolean);
+
+  const basis = lines.length ? lines.join("\n") : total ? `${fmtMoney(total)}원` : "미기재";
+
+  const purpose = payload?.meta?.purpose?.trim();
+  const purposeLine = purpose ? purpose.replace(/\s+/g, " ").slice(0, 120) : "미기재";
+  const totalLine = total ? `${fmtMoney(total)}원` : "미기재";
+
+  // Match Edufine-style outline format from the provided screenshot.
+  return (
+    "1. 다음과 같이 구입하고자 합니다.\n" +
+    "가. 내용\n\n" +
+    `  1) 구입품목: ${itemLine}\n` +
+    `  2) 구입예산: ${totalLine}\n`
+  );
+}
+
 function renderDocFromTemplate(docData) {
   const frag = els.docTemplate.content.cloneNode(true);
   const root = frag.querySelector(".doc-page");
@@ -298,6 +338,7 @@ function renderDocFromTemplate(docData) {
     if (el) el.textContent = val ?? "";
   };
 
+  bindText("fiscalYear", docData.fiscalYear || "");
   bindText("docDate", docData.docDate || "");
   bindText("subject", docData.subject || "");
   bindText("purpose", docData.purpose || "");
@@ -305,45 +346,22 @@ function renderDocFromTemplate(docData) {
   bindText("notes", docData.notes || "");
   bindText("total", docData.total || "");
 
-  const tbody = root.querySelector(`[data-bind="items"]`);
-  tbody.innerHTML = "";
-  for (const it of docData.items || []) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${escapeHtml(it.name || "")}</td>
-      <td class="num">${escapeHtml(it.qty || "")}</td>
-      <td class="num">${escapeHtml(it.unitPrice || "")}</td>
-      <td class="num">${escapeHtml(it.amount || "")}</td>
-      <td>${escapeHtml(it.note || "")}</td>
-    `;
-    tbody.appendChild(tr);
-  }
-
   els.doc.innerHTML = "";
   els.doc.appendChild(frag);
 }
 
 function buildTemplateDoc(payload) {
-  const items = (payload.quote.items || []).map((it) => ({
-    name: it.name || "",
-    qty: it.qty === "" ? "" : fmtMoney(it.qty),
-    unitPrice: it.unitPrice === "" ? "" : fmtMoney(it.unitPrice),
-    amount:
-      it.amount === "" ? "" : fmtMoney(it.amount ?? (Number.isFinite(it.qty) && Number.isFinite(it.unitPrice) ? it.qty * it.unitPrice : "")),
-    note: it.spec || "",
-  }));
-
   const total = payload.quote.total ? fmtMoney(payload.quote.total) : fmtMoney(computeTotal(payload.quote.items || []) || "");
 
   return {
     subject: payload.meta.subject,
+    fiscalYear: payload.meta.fiscalYear,
     docDate: payload.meta.docDate,
-    purpose: payload.meta.purpose,
+    purpose: buildOfficialOutline(payload),
     notes: payload.meta.notes || "-",
     approval:
       "상기 목적 달성을 위해 견적 내역과 같이 구매/결제를 진행하고자 하오니 검토 후 결재를 요청드립니다.\n" +
       "집행 기준 및 예산 범위 내에서 진행 예정입니다.",
-    items,
     total: total ? `${total} 원` : "",
   };
 }
@@ -386,14 +404,15 @@ async function onExtract() {
   setStatus("처리 중...");
 
   try {
-    if (f.name.toLowerCase().endsWith(".xlsx")) {
+    const lower = f.name.toLowerCase();
+    if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
       await extractFromXlsx(f);
       setStatus("엑셀 업로드/추출이 완료되었습니다.");
     } else if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
       await extractFromPdf(f);
       setStatus("PDF 텍스트 추출이 완료되었습니다.");
     } else {
-      setStatus("지원하지 않는 파일 형식입니다. (.xlsx, .pdf)");
+      setStatus("지원하지 않는 파일 형식입니다. (.xls, .xlsx, .pdf)");
       return;
     }
 
@@ -458,6 +477,8 @@ function setNavOpen(open) {
 
 function init() {
   els.docDate.value = els.docDate.value || todayISO();
+  const y = new Date().getFullYear();
+  els.fiscalYear.value = els.fiscalYear.value || String(y);
   setStatus("파일 업로드 후 추출하고, 품의서 생성을 진행하세요.");
 
   els.btnExtract.addEventListener("click", onExtract);
