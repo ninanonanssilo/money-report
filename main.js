@@ -101,10 +101,17 @@ function numToKorean(n) {
 
 function numToKoreanWon(n) {
   const intN = Math.floor(Number(n));
-  if (!Number.isFinite(intN) || intN <= 0) return "";
+  if (!Number.isFinite(intN) || intN < 0) return "";
+  if (intN === 0) return "금영원";
   const words = numToKorean(intN);
   if (!words) return "";
   return `금${words}원`;
+}
+
+function budgetLine(n) {
+  const intN = Math.floor(Number(n));
+  const safe = Number.isFinite(intN) && intN >= 0 ? intN : 0;
+  return `금${fmtMoney(safe)}원(${numToKoreanWon(safe)})`;
 }
 
 function escapeHtml(s) {
@@ -381,8 +388,7 @@ function buildOfficialOutline(payload) {
 
   const purpose = payload?.meta?.purpose?.trim();
   const purposeLine = purpose ? purpose.replace(/\s+/g, " ").slice(0, 160) : "미기재";
-  const totalLine = total ? `${fmtMoney(total)}원` : "미기재";
-  const totalWords = Number.isFinite(total) ? numToKoreanWon(total) : "";
+  const totalN = Number.isFinite(total) && total >= 0 ? total : 0;
 
   const subject = String(payload?.meta?.subject || "").trim() || "미기재";
   const buySentence = `${subject}${josa(subject, "을", "를")} 다음과 같이 구입하고자 합니다.`;
@@ -393,7 +399,7 @@ function buildOfficialOutline(payload) {
     `${buySentence}\n` +
     `1. 목적: ${purposeLine}\n` +
     `2. 품명: ${itemLine}\n` +
-    `3. 소요 예산: 금${totalLine}${totalWords ? `(${totalWords})` : ""}\n` +
+    `3. 소요 예산: ${budgetLine(totalN)}\n` +
     `4. 산출 근거: ${basisLine}\n\n` +
     "붙임 지출품의서 1부. 끝."
   );
@@ -419,7 +425,8 @@ async function onAutoOutline() {
     const data = await callOutlineApi(payload);
     const outline = String(data?.outline || "").trim();
     if (!outline) throw new Error("개요 생성 결과가 비어 있습니다.");
-    els.purpose.value = outline;
+    // Enforce the budget line format: 금0,000원(금영원)
+    els.purpose.value = forceBudgetLine(outline, payload);
     setStatus(data.mode === "ai" ? "AI로 개요가 생성되었습니다." : "개요가 생성되었습니다.");
   } catch (e) {
     console.error(e);
@@ -429,6 +436,24 @@ async function onAutoOutline() {
   } finally {
     setBusy(false);
   }
+}
+
+function forceBudgetLine(outline, payload) {
+  const items = payload?.quote?.items || [];
+  const total = payload?.quote?.total ?? computeTotal(items) ?? 0;
+  const line = `3. 소요 예산: ${budgetLine(total)}`;
+  const lines = String(outline || "").split(/\r?\n/);
+  const idx = lines.findIndex((l) => l.trim().startsWith("3. 소요 예산:"));
+  if (idx >= 0) {
+    lines[idx] = line;
+    return lines.join("\n").trim();
+  }
+  const idx2 = lines.findIndex((l) => l.trim().startsWith("2. 품명:"));
+  if (idx2 >= 0) {
+    lines.splice(idx2 + 1, 0, line);
+    return lines.join("\n").trim();
+  }
+  return (String(outline || "").trim() + "\n" + line).trim();
 }
 
 async function onExtract() {

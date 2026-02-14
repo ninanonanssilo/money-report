@@ -62,7 +62,8 @@ function buildOutlineTemplate(payload) {
   const purposeLine = asString(meta.purpose).trim()
     ? asString(meta.purpose).trim().replace(/\s+/g, " ").slice(0, 160)
     : "미기재";
-  const totalLine = total ? `${fmtMoney(total)}원` : "미기재";
+  const totalN = Number.isFinite(total) && total >= 0 ? total : 0;
+  const totalLine = `금${fmtMoney(totalN)}원(${numToKoreanWon(totalN)})`;
 
   const basis = items
     .filter((it) => it && (it.amount || (Number.isFinite(it.qty) && Number.isFinite(it.unitPrice))))
@@ -84,7 +85,7 @@ function buildOutlineTemplate(payload) {
     `${subject}을(를) 다음과 같이 구입하고자 합니다.\n` +
     `1. 목적: ${purposeLine}\n` +
     `2. 품명: ${itemLine}\n` +
-    `3. 소요 예산: 금${totalLine}\n` +
+    `3. 소요 예산: ${totalLine}\n` +
     `4. 산출 근거: ${basisLine}\n\n` +
     "붙임 지출품의서 1부. 끝."
   );
@@ -121,7 +122,7 @@ function buildPrompt(payload) {
     "1) '<제목>을(를) 다음과 같이 구입하고자 합니다.'",
     "2) '1. 목적: ...'",
     "3) '2. 품명: ...'",
-    "4) '3. 소요 예산: 금...원(가능하면 한글 금액 병기)'",
+    "4) '3. 소요 예산: 금0,000원(금영원)' (반드시 이 형태. 괄호 안은 한글 금액)",
     "5) '4. 산출 근거: ...'",
     "6) blank line",
     "7) '붙임 지출품의서 1부. 끝.'",
@@ -181,6 +182,87 @@ async function callOpenAI({ apiKey, payload }) {
   return outline;
 }
 
+function hasBatchim(s) {
+  const t = String(s || "").trim();
+  if (!t) return false;
+  const ch = t.charCodeAt(t.length - 1);
+  if (ch < 0xac00 || ch > 0xd7a3) return false;
+  return (ch - 0xac00) % 28 !== 0;
+}
+
+function josa(word, a, b) {
+  return hasBatchim(word) ? a : b;
+}
+
+function numToKorean(n) {
+  const units = ["", "만", "억", "조", "경"];
+  const digits = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"];
+  const small = ["", "십", "백", "천"];
+
+  const num = Math.floor(Number(n));
+  if (!Number.isFinite(num) || num <= 0) return "";
+
+  const chunk = (x) => {
+    let out = "";
+    const ds = String(x).padStart(4, "0").split("").map((c) => Number(c));
+    for (let i = 0; i < 4; i++) {
+      const d = ds[i];
+      if (!d) continue;
+      const pos = 3 - i;
+      out += (d === 1 && pos > 0 ? "" : digits[d]) + small[pos];
+    }
+    return out;
+  };
+
+  let x = num;
+  let i = 0;
+  let out = "";
+  while (x > 0 && i < units.length) {
+    const part = x % 10000;
+    if (part) out = chunk(part) + units[i] + out;
+    x = Math.floor(x / 10000);
+    i++;
+  }
+  return out;
+}
+
+function numToKoreanWon(n) {
+  const intN = Math.floor(Number(n));
+  if (!Number.isFinite(intN) || intN < 0) return "";
+  if (intN === 0) return "금영원";
+  const w = numToKorean(intN);
+  return w ? `금${w}원` : "";
+}
+
+function budgetLine(total) {
+  const intN = Math.floor(Number(total));
+  const safe = Number.isFinite(intN) && intN >= 0 ? intN : 0;
+  return `금${fmtMoney(safe)}원(${numToKoreanWon(safe)})`;
+}
+
+function forceBudgetLine(outline, payload) {
+  const quote = payload?.quote || {};
+  const items = Array.isArray(quote.items) ? quote.items : [];
+  const total = Number.isFinite(quote.total) ? quote.total : computeTotal(items);
+  const line = `3. 소요 예산: ${budgetLine(total)}`;
+
+  const lines = String(outline || "").split(/\r?\n/);
+  const idx = lines.findIndex((l) => l.trim().startsWith("3. 소요 예산:"));
+  if (idx >= 0) {
+    lines[idx] = line;
+    return lines.join("\n").trim();
+  }
+
+  // Insert after "2. 품명" if possible, else append.
+  const idx2 = lines.findIndex((l) => l.trim().startsWith("2. 품명:"));
+  if (idx2 >= 0) {
+    lines.splice(idx2 + 1, 0, line);
+    return lines.join("\n").trim();
+  }
+
+  return (String(outline || "").trim() + "\n" + line).trim();
+}
+
 export async function onRequestOptions() {
   return new Response(null, { status: 204, headers: okCors() });
 }
@@ -197,11 +279,11 @@ export async function onRequestPost(context) {
       return jsonResponse({ mode: "template", outline }, { headers: okCors() });
     }
 
-    const outline = await callOpenAI({ apiKey, payload });
+    const outlineRaw = await callOpenAI({ apiKey, payload });
+    const outline = forceBudgetLine(outlineRaw, payload);
     return jsonResponse({ mode: "ai", outline }, { headers: okCors() });
   } catch (e) {
     const msg = e?.message ? String(e.message) : "unknown error";
     return jsonResponse({ error: msg }, { status: 500, headers: okCors() });
   }
 }
-
