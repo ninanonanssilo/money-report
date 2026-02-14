@@ -559,6 +559,12 @@ body.nav-open .scrim {
 /* Responsive: turn the table-form into a 1-column stacked form on small screens.
    Fixes iOS/viewport clipping and "label column keeps eating width" issues. */
 @media (max-width: 820px) {
+  /* Prefer word-boundary wrapping on mobile (Korean 어절 단위). */
+  body {
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+
   .form-wrap {
     overflow: visible;
   }
