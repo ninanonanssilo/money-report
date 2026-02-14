@@ -211,7 +211,6 @@ async function callOpenAI({ apiKey, model, source, filename, rows, rawText }) {
     },
     body: JSON.stringify({
       model: useModel,
-      temperature: 0.1,
       instructions,
       input: [
         {
