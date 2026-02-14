@@ -240,6 +240,10 @@ body.nav-open .scrim {
   background: rgba(255, 255, 255, 0.98);
 }
 
+.side-foot-spacer {
+  height: 4px;
+}
+
 /* Header */
 .top {
   padding: 18px 0 0;
