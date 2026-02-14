@@ -28,7 +28,7 @@ const state = {
     items: [],
     total: null,
     rawText: "",
-    rawRows: null, // for AI-assisted extraction on messy formats
+    rawRows: null, // for assisted extraction on messy formats
   },
 };
 
@@ -543,12 +543,12 @@ async function onAutoOutline() {
     if (!outline) throw new Error("개요 생성 결과가 비어 있습니다.");
     // Enforce the budget line format: 금0,000원(금영원)
     els.purpose.value = forceBudgetLine(outline, payload);
-    setStatus(data.mode === "ai" ? "AI로 개요가 생성되었습니다." : "개요가 생성되었습니다.");
+    setStatus(data.mode === "ai" ? "자동 생성이 완료되었습니다." : "개요가 생성되었습니다.");
   } catch (e) {
     console.error(e);
     // Fallback to deterministic outline
     els.purpose.value = buildOfficialOutline(payload);
-    setStatus(`AI 연결 문제로 기본 개요로 채웠습니다: ${e?.message || String(e)}`);
+    setStatus(`자동 생성 연결 문제로 기본 개요로 채웠습니다: ${e?.message || String(e)}`);
   } finally {
     setBusy(false);
   }
@@ -585,7 +585,7 @@ async function extractOneFile(f) {
     throw new Error("지원하지 않는 파일 형식입니다. (.xls, .xlsx, .pdf)");
   }
 
-  // If heuristic extraction failed, ask the AI to structure items from rows/text.
+  // If heuristic extraction failed, use the server-assisted structuring if configured.
   if (!state.extracted.items?.length) {
     try {
       const rows = state.extracted.rawRows;
@@ -608,7 +608,7 @@ async function extractOneFile(f) {
         };
       }
     } catch (e) {
-      console.warn("AI extract failed:", e);
+      console.warn("assisted extract failed:", e);
     }
   }
 
