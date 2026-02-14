@@ -32,6 +32,10 @@ const state = {
   },
 };
 
+function blankExtracted() {
+  return { source: null, items: [], total: null, rawText: "", rawRows: null };
+}
+
 function todayISO() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -568,59 +572,119 @@ function forceBudgetLine(outline, payload) {
   return (String(outline || "").trim() + "\n" + line).trim();
 }
 
+async function extractOneFile(f) {
+  // Reset state per file so XLSX/PDF extractors can keep their current contract.
+  state.extracted = blankExtracted();
+
+  const lower = f.name.toLowerCase();
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    await extractFromXlsx(f);
+  } else if (f.type === "application/pdf" || lower.endsWith(".pdf")) {
+    await extractFromPdf(f);
+  } else {
+    throw new Error("지원하지 않는 파일 형식입니다. (.xls, .xlsx, .pdf)");
+  }
+
+  // If heuristic extraction failed, ask the AI to structure items from rows/text.
+  if (!state.extracted.items?.length) {
+    try {
+      const rows = state.extracted.rawRows;
+      const rawText = state.extracted.rawText;
+      const data = await callExtractApi({
+        source: state.extracted.source,
+        filename: f.name,
+        rows,
+        rawText,
+      });
+
+      const items = normalizeItems(data?.items || []);
+      const total = computeTotal(items) ?? (Number.isFinite(data?.total) ? data.total : null);
+      if (items.length) {
+        state.extracted = {
+          ...state.extracted,
+          source: data.mode === "ai" ? "ai" : state.extracted.source,
+          items,
+          total,
+        };
+      }
+    } catch (e) {
+      console.warn("AI extract failed:", e);
+    }
+  }
+
+  return {
+    filename: f.name,
+    source: state.extracted.source,
+    items: Array.isArray(state.extracted.items) ? [...state.extracted.items] : [],
+    total: state.extracted.total,
+    rawText: state.extracted.rawText,
+    rawRows: state.extracted.rawRows,
+  };
+}
+
 async function onExtract() {
-  const f = els.file.files?.[0];
-  if (!f) {
+  const files = Array.from(els.file.files || []);
+  if (!files.length) {
     setStatus("파일을 선택하세요.");
     return;
   }
 
   setBusy(true);
-  setStatus("처리 중...");
 
   try {
-    const lower = f.name.toLowerCase();
-    if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-      await extractFromXlsx(f);
-      setStatus("엑셀 업로드/추출이 완료되었습니다.");
-    } else if (f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf")) {
-      await extractFromPdf(f);
-      setStatus("PDF 텍스트 추출이 완료되었습니다.");
-    } else {
-      setStatus("지원하지 않는 파일 형식입니다. (.xls, .xlsx, .pdf)");
+    const ok = [];
+    const failed = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setStatus(`처리 중... (${i + 1}/${files.length}) ${f.name}`);
+      try {
+        ok.push(await extractOneFile(f));
+      } catch (e) {
+        console.warn("extract failed:", f?.name, e);
+        failed.push({ name: f?.name || "unknown", err: e });
+      }
+    }
+
+    if (!ok.length) {
+      const msg = failed.length
+        ? `실패: ${failed[0]?.err?.message || String(failed[0]?.err || "")}`
+        : "실패: 추출할 파일이 없습니다.";
+      setStatus(msg);
       return;
     }
 
-    // If heuristic extraction failed, ask the AI to structure items from rows/text.
-    if (!state.extracted.items?.length) {
-      try {
-        const rows = state.extracted.rawRows;
-        const rawText = state.extracted.rawText;
-        const data = await callExtractApi({
-          source: state.extracted.source,
-          filename: f.name,
-          rows,
-          rawText,
-        });
-
-        const items = normalizeItems(data?.items || []);
-        const total = computeTotal(items) ?? (Number.isFinite(data?.total) ? data.total : null);
-        if (items.length) {
-          state.extracted = {
-            ...state.extracted,
-            source: data.mode === "ai" ? "ai" : state.extracted.source,
-            items,
-            total,
-          };
-          setStatus("AI 보정 추출이 완료되었습니다.");
-        }
-      } catch (e) {
-        console.warn("AI extract failed:", e);
-      }
+    if (ok.length === 1) {
+      // Preserve previous behavior: render a single file's extracted state.
+      state.extracted = {
+        source: ok[0].source,
+        items: ok[0].items,
+        total: ok[0].total,
+        rawText: ok[0].rawText,
+        rawRows: ok[0].rawRows,
+      };
+    } else {
+      const items = ok.flatMap((r) => r.items || []);
+      const computed = computeTotal(items);
+      const summed = ok
+        .map((r) => r.total)
+        .filter((n) => Number.isFinite(n))
+        .reduce((a, b) => a + b, 0);
+      const total = computed ?? (summed > 0 ? summed : null);
+      const rawText = ok
+        .map((r) => (r.rawText ? `----- ${r.filename} -----\n${r.rawText}` : ""))
+        .filter(Boolean)
+        .join("\n\n");
+      state.extracted = { source: "multi", items, total, rawText, rawRows: null };
     }
 
     renderItems(state.extracted.items);
     renderExtractSummary();
+    if (!failed.length) {
+      setStatus(ok.length > 1 ? `추출이 완료되었습니다. (${ok.length}개 파일)` : "업로드/추출이 완료되었습니다.");
+    } else {
+      setStatus(`추출 완료 (${ok.length}개 성공, ${failed.length}개 실패)`);
+    }
   } catch (e) {
     console.error(e);
     setStatus(`실패: ${e?.message || String(e)}`);
@@ -656,13 +720,23 @@ function init() {
   });
 
   els.file.addEventListener("change", () => {
-    const f = els.file.files?.[0];
-    if (!f) {
+    const files = Array.from(els.file.files || []);
+    if (!files.length) {
       els.fileHint.textContent = "지원: .xls, .xlsx, .pdf";
       return;
     }
-    const kb = Math.max(1, Math.round(f.size / 1024));
-    els.fileHint.textContent = `${f.name} (${kb} KB)`;
+    if (files.length === 1) {
+      const f = files[0];
+      const kb = Math.max(1, Math.round(f.size / 1024));
+      els.fileHint.textContent = `${f.name} (${kb} KB)`;
+    } else {
+      const names = files
+        .slice(0, 3)
+        .map((f) => f.name)
+        .join(", ");
+      const more = files.length > 3 ? ` 외 ${files.length - 3}개` : "";
+      els.fileHint.textContent = `${files.length}개 선택됨: ${names}${more}`;
+    }
     // Auto extract on file selection.
     onExtract();
   });
