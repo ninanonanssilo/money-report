@@ -563,6 +563,11 @@ body.nav-open .scrim {
     overflow: visible;
   }
 
+  /* Slightly more breathing room on mobile */
+  .form-wrap {
+    padding: 16px;
+  }
+
   .form-wrap .form-table,
   .form-wrap .form-table tbody,
   .form-wrap .form-table tr {
@@ -582,13 +587,14 @@ body.nav-open .scrim {
   .form-wrap .form-table th {
     display: block;
     width: 100%;
-    padding: 0 0 8px 0;
+    padding: 0 0 10px 0;
     background: transparent;
     border-right: 0;
     border-bottom: 0;
     color: rgba(17, 24, 39, 0.82);
     white-space: normal;
     text-align: left;
+    line-height: 1.35;
   }
 
   .form-wrap .form-table td {
@@ -608,6 +614,38 @@ body.nav-open .scrim {
 
   .form-wrap .form-table td .row > * {
     width: 100%;
+  }
+
+  /* Inputs/selects/textareas: padding + line-height for iOS readability */
+  .form-wrap input[type="text"],
+  .form-wrap input[type="date"],
+  .form-wrap input[type="file"],
+  .form-wrap select,
+  .form-wrap textarea {
+    padding: 12px 14px;
+    line-height: 1.35;
+    border-radius: 14px;
+  }
+
+  .form-wrap input[type="date"] {
+    min-height: 48px;
+  }
+
+  /* Buttons: larger touch target and better text padding */
+  .form-wrap button,
+  .form-wrap .btn,
+  .form-wrap .pill,
+  .form-wrap input[type="button"],
+  .form-wrap input[type="submit"] {
+    padding: 12px 14px;
+    min-height: 48px;
+    line-height: 1.2;
+    border-radius: 14px;
+  }
+
+  .form-wrap input::placeholder,
+  .form-wrap textarea::placeholder {
+    line-height: 1.35;
   }
 }
 
