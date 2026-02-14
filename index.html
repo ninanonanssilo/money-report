@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Money Report</title>
+    <title>품의 기안 생성기</title>
     <meta name="description" content="견적서(엑셀/PDF)로 품의서를 자동 작성합니다." />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -17,94 +17,139 @@
     <script src="main.js" type="module" defer></script>
   </head>
   <body>
-    <div class="bg" aria-hidden="true"></div>
+    <aside id="sidebar" class="sidebar" aria-label="카테고리">
+      <div class="side-head">
+        <div class="side-title">카테고리</div>
+        <button id="navClose" class="icon-btn" type="button" aria-label="닫기">×</button>
+      </div>
+      <nav class="side-nav">
+        <a class="side-link is-active" href="/" aria-current="page">품의 기안 생성기</a>
+        <a class="side-link" href="https://educate1.pages.dev/" target="_blank" rel="noreferrer">학교 공문 자동 작성 도우미</a>
+      </nav>
+      <div class="side-foot">
+        <div class="side-note">추후 이 메뉴에서 서비스 간 연동을 추가합니다.</div>
+      </div>
+    </aside>
+    <div id="scrim" class="scrim" aria-hidden="true"></div>
 
     <header class="top">
-      <div class="brand">
-        <div class="mark" aria-hidden="true"></div>
-        <div class="brand-text">
-          <div class="name">Money Report</div>
-          <div class="tag">견적서 첨부로 품의서 자동 작성</div>
+      <div class="top-inner">
+        <button id="navToggle" class="nav-toggle" type="button" aria-label="카테고리 열기" aria-expanded="false">
+          <span class="bar"></span>
+          <span class="bar"></span>
+          <span class="bar"></span>
+        </button>
+        <div>
+          <h1 class="title">품의 기안 생성기</h1>
+          <div class="subtitle">견적서 첨부로 공문서 품의 문서를 자동으로 작성합니다.</div>
         </div>
-      </div>
-      <div class="top-actions">
-        <button id="btn-print" class="btn btn-ghost" type="button">인쇄</button>
       </div>
     </header>
 
-    <main class="layout">
-      <section class="card">
-        <h1 class="h1">품의서 자동 작성</h1>
-        <p class="lead">
-          엑셀(.xlsx) 또는 PDF 견적서를 올리면, 항목/금액을 최대한 추출하고 공문서 스타일의 품의 문서를 생성합니다.
-          (MVP: PDF는 형식에 따라 추출 품질이 달라질 수 있어요)
-        </p>
+    <main class="page">
+      <section class="guide" aria-label="안내">
+        <div class="guide-col">
+          <div class="guide-h">1. 개요</div>
+          <ul class="guide-ul">
+            <li>품목 내용을 기반으로 기본적인 개요 내용을 제공합니다.</li>
+            <li>필수 항목만 입력해도 문서 생성이 가능합니다.</li>
+            <li>각 항목의 ‘내용복사’ 버튼으로 빠르게 복사할 수 있습니다.</li>
+          </ul>
+        </div>
+        <div class="guide-col">
+          <div class="guide-h">2. 파일 업로드</div>
+          <ul class="guide-ul">
+            <li>버튼을 클릭하시면 업로드 가능합니다.</li>
+            <li>다운로드 한 엑셀파일을 그대로 업로드하시면 상품이 자동으로 입력됩니다.</li>
+            <li class="em">파일 업로드 시 더 쉽고 빠르게 입력이 가능합니다.</li>
+          </ul>
+        </div>
+      </section>
 
-        <div class="grid2">
-          <div class="field">
-            <div class="label">견적서 파일</div>
-            <input id="file" class="input" type="file" accept=".xlsx,.pdf,application/pdf" aria-label="견적서 파일 선택" />
-            <div id="file-hint" class="hint">지원: .xlsx, .pdf</div>
-          </div>
-
-          <div class="field">
-            <div class="label">OpenAI 연결</div>
-            <div class="hint">Cloudflare Pages 환경변수 `OPENAI_API_KEY`로 설정해서 사용합니다. (브라우저 입력 없음)</div>
-          </div>
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">에듀파인 업로드 항목 복사 및 양식 다운로드</h2>
+          <a class="link" href="/assets/edufine_quote_template_20260214.xlsx" download>업로드 양식 다운로드</a>
         </div>
 
-        <div class="divider"></div>
+        <div class="form-wrap">
+          <table class="form-table" aria-label="품의 입력">
+            <tbody>
+              <tr>
+                <th scope="row">견적서 파일</th>
+                <td>
+                  <div class="row">
+                    <input
+                      id="file"
+                      class="file"
+                      type="file"
+                      accept=".xlsx,.pdf,application/pdf"
+                      aria-label="견적서 파일 선택"
+                    />
+                    <button id="btn-extract" class="btn" type="button">업로드/추출</button>
+                    <div id="file-hint" class="hint">지원: .xlsx, .pdf</div>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">제목</th>
+                <td>
+                  <input id="subject" class="input" type="text" placeholder="예: 소프트웨어 구독 결제 품의" />
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">기안자</th>
+                <td>
+                  <input id="requester" class="input" type="text" placeholder="예: 홍길동" />
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">작성일</th>
+                <td>
+                  <input id="docDate" class="input" type="date" />
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">개요</th>
+                <td>
+                  <div class="textarea-row">
+                    <textarea id="purpose" class="textarea" rows="6" placeholder="예: 프로젝트 운영을 위한 필수 라이선스 확보"></textarea>
+                    <button id="btn-copy-purpose" class="pill" type="button">내용복사</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">비고</th>
+                <td>
+                  <textarea id="notes" class="textarea" rows="3" placeholder="예: 검토 요청 사항, 결재 라인 안내 등"></textarea>
+                </td>
+              </tr>
+            </tbody>
+          </table>
 
-        <h2 class="h2">품의 정보</h2>
-        <div class="grid2">
-          <div class="field">
-            <label class="label" for="subject">제목</label>
-            <input id="subject" class="input" type="text" placeholder="예: 소프트웨어 구독 결제 품의" />
+          <div class="actions">
+            <button id="btn-generate" class="btn btn-primary" type="button">품의서 생성</button>
           </div>
-          <div class="field">
-            <label class="label" for="requester">기안자</label>
-            <input id="requester" class="input" type="text" placeholder="예: 홍길동" />
-          </div>
-          <div class="field">
-            <label class="label" for="docDate">작성일</label>
-            <input id="docDate" class="input" type="date" />
-          </div>
-          <div class="field">
-            <label class="label" for="purpose">목적/배경</label>
-            <textarea id="purpose" class="textarea" rows="4" placeholder="예: 프로젝트 운영을 위한 필수 라이선스 확보"></textarea>
-          </div>
-          <div class="field">
-            <label class="label" for="notes">비고</label>
-            <textarea id="notes" class="textarea" rows="4" placeholder="예: 검토 요청 사항, 결재 라인 안내 등"></textarea>
-          </div>
+
+          <div id="status" class="status" role="status" aria-live="polite"></div>
         </div>
+      </section>
 
-        <div class="divider"></div>
-
-        <h2 class="h2">견적서 텍스트 (PDF 추출이 안 될 때)</h2>
-        <p class="hint">PDF가 이미지/스캔이면 자동 추출이 어려울 수 있습니다. 이 경우 텍스트를 붙여넣으면 생성 품질이 좋아집니다.</p>
-        <textarea id="quoteText" class="textarea mono" rows="6" placeholder="견적서 내용 텍스트를 여기에 붙여넣기"></textarea>
-
-        <div class="actions">
-          <button id="btn-extract" class="btn" type="button">파일에서 항목 추출</button>
-          <button id="btn-generate" class="btn btn-primary" type="button">품의서 생성</button>
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">품목내역</h2>
         </div>
-
-        <div id="status" class="status" role="status" aria-live="polite"></div>
-
-        <div class="divider"></div>
-
-        <h2 class="h2">추출 결과</h2>
         <div id="extractSummary" class="summary"></div>
         <div class="table-wrap">
           <table class="table" aria-label="추출 항목">
             <thead>
               <tr>
-                <th>품목</th>
-                <th class="num">수량</th>
-                <th class="num">단가</th>
-                <th class="num">금액</th>
-                <th>비고</th>
+                <th class="num w-no">순번</th>
+                <th>내용</th>
+                <th class="w-spec">규격</th>
+                <th class="num w-qty">수량</th>
+                <th class="num w-unit">단가</th>
+                <th class="num w-amt">금액</th>
               </tr>
             </thead>
             <tbody id="itemsTbody"></tbody>
@@ -112,17 +157,18 @@
         </div>
       </section>
 
-      <aside class="card paper">
-        <div class="paper-toolbar">
-          <div class="paper-title">미리보기</div>
-          <button id="btn-copy" class="btn btn-ghost" type="button">복사</button>
+      <section class="section">
+        <div class="section-head">
+          <h2 class="section-title">생성 결과</h2>
+          <div class="head-actions">
+            <button id="btn-copy" class="btn btn-ghost" type="button">복사</button>
+            <button id="btn-print" class="btn btn-ghost" type="button">인쇄</button>
+          </div>
         </div>
         <article id="doc" class="doc" aria-label="품의서 미리보기">
-          <div class="doc-empty">
-            아직 문서가 없습니다. 왼쪽에서 추출/생성을 진행하세요.
-          </div>
+          <div class="doc-empty">아직 문서가 없습니다. 위에서 추출/생성을 진행하세요.</div>
         </article>
-      </aside>
+      </section>
     </main>
 
     <template id="docTemplate">
