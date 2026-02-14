@@ -241,7 +241,7 @@ async function loadScript(src) {
 
 async function loadPdfJs() {
   loadPdfJs._p ||= (async () => {
-    // 1) Prefer ESM build.
+    // Use ESM builds (static-hosting friendly). Try multiple CDNs for reliability.
     try {
       const url = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.mjs";
       const mod = await import(url);
@@ -249,15 +249,124 @@ async function loadPdfJs() {
       mod.GlobalWorkerOptions.workerSrc = workerUrl;
       return mod;
     } catch (e) {
-      // 2) Fallback to UMD build (more compatible with older/iOS in-app browsers).
-      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js");
-      const lib = window.pdfjsLib;
-      if (!lib?.getDocument) throw e;
-      lib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js";
-      return lib;
+      try {
+        const url = "https://unpkg.com/pdfjs-dist@4.10.38/build/pdf.mjs";
+        const mod = await import(url);
+        mod.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
+        return mod;
+      } catch (e2) {
+        const url = "https://unpkg.com/pdfjs-dist@4.10.38/legacy/build/pdf.mjs";
+        const mod = await import(url);
+        mod.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@4.10.38/legacy/build/pdf.worker.mjs";
+        return mod;
+      }
     }
   })();
   return loadPdfJs._p;
+}
+
+async function loadTesseract() {
+  // Use UMD build to keep it compatible with static hosting.
+  await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
+  const t = window.Tesseract;
+  if (!t?.recognize) throw new Error("OCR 라이브러리(Tesseract) 로드에 실패했습니다.");
+  return t;
+}
+
+function isSmallScreen() {
+  try {
+    return window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
+  } catch {
+    return false;
+  }
+}
+
+async function renderPdfPageToCanvas(pdfDoc, pageNumber, scale) {
+  const page = await pdfDoc.getPage(pageNumber);
+  const viewport = page.getViewport({ scale });
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas;
+}
+
+function binarizeInPlace(data) {
+  // Lightweight binarization to improve OCR on scans.
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i],
+      g = data[i + 1],
+      b = data[i + 2];
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const v = gray > 200 ? 255 : 0;
+    data[i] = data[i + 1] = data[i + 2] = v;
+  }
+}
+
+async function ocrPdfToText(file, { maxPages, scale, lang, onProgress }) {
+  const tesseract = await loadTesseract();
+  const pdfjs = await loadPdfJs();
+
+  const ab = await file.arrayBuffer();
+  const pdfDoc = await pdfjs.getDocument({ data: ab }).promise;
+
+  const pages = Math.min(pdfDoc.numPages, Math.max(1, maxPages || 1));
+  let out = "";
+
+  for (let p = 1; p <= pages; p++) {
+    onProgress?.(`스캔 PDF OCR 중... (${p}/${pages})`);
+    const canvas = await renderPdfPageToCanvas(pdfDoc, p, scale || 2.0);
+
+    // Basic preprocessing
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    binarizeInPlace(img.data);
+    ctx.putImageData(img, 0, 0);
+
+    const { data } = await tesseract.recognize(canvas, lang || "kor+eng", {
+      logger: (m) => {
+        if (m?.status === "recognizing text") {
+          const pct = Math.round((m.progress || 0) * 100);
+          onProgress?.(`OCR 인식 중... ${pct}% (p${p}/${pages})`);
+        }
+      },
+    });
+
+    out += "\n" + (data?.text || "");
+  }
+
+  return out.trim();
+}
+
+async function extractPdfTextQuick(file, { maxPages }) {
+  const ab = await file.arrayBuffer();
+  const pdfjs = await loadPdfJs();
+
+  // If worker init fails on some iOS environments, run without worker.
+  if (pdfjs?.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+    try {
+      pdfjs.disableWorker = true;
+    } catch {
+      // ignore
+    }
+  }
+
+  const loadingTask = pdfjs.getDocument({ data: ab });
+  const doc = await loadingTask.promise;
+
+  let all = "";
+  const pages = Math.min(doc.numPages, Math.max(1, maxPages || 1));
+  for (let p = 1; p <= pages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    const text = content.items.map((it) => it.str).join(" ");
+    all += text + "\n";
+  }
+
+  return all.trim();
 }
 
 function looksLikeHtmlBytes(bytes) {
@@ -421,33 +530,33 @@ function parseNum(s) {
 }
 
 async function extractFromPdf(file) {
-  const ab = await file.arrayBuffer();
-  const pdfjs = await loadPdfJs();
-  // Last-resort: if worker init fails on some iOS environments, run without worker.
-  if (pdfjs?.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
-    try {
-      pdfjs.disableWorker = true;
-    } catch {
-      // ignore
-    }
-  }
-  const loadingTask = pdfjs.getDocument({ data: ab });
-  const doc = await loadingTask.promise;
+  const small = isSmallScreen();
+  const maxPages = small ? 2 : 3;
 
-  let all = "";
-  const pages = Math.min(doc.numPages, 10);
-  for (let p = 1; p <= pages; p++) {
-    const page = await doc.getPage(p);
-    const content = await page.getTextContent();
-    const text = content.items.map((it) => it.str).join(" ");
-    all += text + "\n";
+  setStatus(`PDF 읽는 중... (${maxPages}p)`);
+  let text = "";
+  try {
+    text = await extractPdfTextQuick(file, { maxPages });
+  } catch (e) {
+    console.warn("pdf text extract failed:", e);
   }
 
-  if (!all.trim()) {
-    throw new Error("PDF에서 텍스트를 찾지 못했습니다. 스캔본 PDF는 현재 추출이 어렵습니다.");
+  // If text is too short, treat as scanned PDF and OCR it.
+  const compactLen = text.replace(/\s+/g, "").length;
+  if (compactLen < 80) {
+    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. OCR을 시작합니다... (느릴 수 있음)");
+    const ocrText = await ocrPdfToText(file, {
+      maxPages: small ? 1 : 2,
+      scale: small ? 1.7 : 2.1,
+      lang: "kor+eng",
+      onProgress: (m) => setStatus(m),
+    });
+    if (!ocrText) throw new Error("OCR 결과가 비어 있습니다. 스캔 품질(흐림/기울기)을 확인해 주세요.");
+    text = ocrText;
+    setStatus("OCR 완료. 품목 구조화를 진행합니다...");
   }
 
-  state.extracted = { source: "pdf", items: [], total: null, rawText: all.trim(), rawRows: null };
+  state.extracted = { source: "pdf", items: [], total: null, rawText: String(text || "").trim(), rawRows: null };
 }
 
 function toDocPayload() {
@@ -656,7 +765,7 @@ async function extractOneFile(f) {
       );
     }
     if (state.extracted.source === "pdf") {
-      throw new Error("PDF에서 품목을 찾지 못했습니다. 텍스트 기반 PDF인지 확인해 주세요.");
+      throw new Error("PDF에서 품목을 찾지 못했습니다. 스캔본이면 OCR이 필요하거나, 품목표가 이미지/표로만 존재할 수 있습니다.");
     }
   }
 
