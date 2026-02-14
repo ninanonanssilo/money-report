@@ -8,6 +8,7 @@ const els = {
 
   file: $("file"),
   fileHint: $("file-hint"),
+  status: $("status"),
 
   subject: $("subject"),
   docDate: $("docDate"),
@@ -45,7 +46,9 @@ function todayISO() {
 }
 
 function setStatus(msg) {
-  if (msg) console.log(msg);
+  const m = msg ? String(msg) : "";
+  if (els.status) els.status.textContent = m;
+  if (m) console.log(m);
 }
 
 function fmtMoney(v) {
@@ -220,7 +223,11 @@ function renderItems(items) {
 }
 
 async function loadScript(src) {
-  return new Promise((resolve, reject) => {
+  // Cache loads so multiple extracts don't inject duplicate tags.
+  loadScript._p ||= new Map();
+  if (loadScript._p.has(src)) return loadScript._p.get(src);
+
+  const p = new Promise((resolve, reject) => {
     const s = document.createElement("script");
     s.src = src;
     s.async = true;
@@ -228,14 +235,29 @@ async function loadScript(src) {
     s.onerror = () => reject(new Error(`Failed to load script: ${src}`));
     document.head.appendChild(s);
   });
+  loadScript._p.set(src, p);
+  return p;
 }
 
 async function loadPdfJs() {
-  const url = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.mjs";
-  const mod = await import(url);
-  const workerUrl = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs";
-  mod.GlobalWorkerOptions.workerSrc = workerUrl;
-  return mod;
+  loadPdfJs._p ||= (async () => {
+    // 1) Prefer ESM build.
+    try {
+      const url = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.mjs";
+      const mod = await import(url);
+      const workerUrl = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.mjs";
+      mod.GlobalWorkerOptions.workerSrc = workerUrl;
+      return mod;
+    } catch (e) {
+      // 2) Fallback to UMD build (more compatible with older/iOS in-app browsers).
+      await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.js");
+      const lib = window.pdfjsLib;
+      if (!lib?.getDocument) throw e;
+      lib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.js";
+      return lib;
+    }
+  })();
+  return loadPdfJs._p;
 }
 
 function looksLikeHtmlBytes(bytes) {
@@ -291,6 +313,7 @@ async function extractFromHtmlXls(file) {
 async function extractFromXlsx(file) {
   if (!window.XLSX) {
     await loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js");
+    if (!window.XLSX) throw new Error("엑셀 파서 로드에 실패했습니다. 네트워크 상태를 확인하세요.");
   }
 
   // Some .xls files are actually HTML. Detect and parse accordingly.
@@ -400,6 +423,14 @@ function parseNum(s) {
 async function extractFromPdf(file) {
   const ab = await file.arrayBuffer();
   const pdfjs = await loadPdfJs();
+  // Last-resort: if worker init fails on some iOS environments, run without worker.
+  if (pdfjs?.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) {
+    try {
+      pdfjs.disableWorker = true;
+    } catch {
+      // ignore
+    }
+  }
   const loadingTask = pdfjs.getDocument({ data: ab });
   const doc = await loadingTask.promise;
 
@@ -410,6 +441,10 @@ async function extractFromPdf(file) {
     const content = await page.getTextContent();
     const text = content.items.map((it) => it.str).join(" ");
     all += text + "\n";
+  }
+
+  if (!all.trim()) {
+    throw new Error("PDF에서 텍스트를 찾지 못했습니다. 스캔본 PDF는 현재 추출이 어렵습니다.");
   }
 
   state.extracted = { source: "pdf", items: [], total: null, rawText: all.trim(), rawRows: null };
@@ -576,13 +611,15 @@ async function extractOneFile(f) {
   // Reset state per file so XLSX/PDF extractors can keep their current contract.
   state.extracted = blankExtracted();
 
-  const lower = f.name.toLowerCase();
-  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+  const lower = (f.name || "").toLowerCase();
+  const isXls = lower.endsWith(".xlsx") || lower.endsWith(".xls");
+  const isPdf = lower.endsWith(".pdf") || f.type === "application/pdf";
+  if (isXls) {
     await extractFromXlsx(f);
-  } else if (f.type === "application/pdf" || lower.endsWith(".pdf")) {
+  } else if (isPdf) {
     await extractFromPdf(f);
   } else {
-    throw new Error("지원하지 않는 파일 형식입니다. (.xls, .xlsx, .pdf)");
+    throw new Error(`지원하지 않는 파일 형식입니다: ${f.name || "unknown"} (.xls, .xlsx, .pdf)`);
   }
 
   // If heuristic extraction failed, use the server-assisted structuring if configured.
@@ -609,6 +646,17 @@ async function extractOneFile(f) {
       }
     } catch (e) {
       console.warn("assisted extract failed:", e);
+    }
+  }
+
+  if (!state.extracted.items?.length) {
+    if (state.extracted.source === "xlsx") {
+      throw new Error(
+        "엑셀에서 품목 헤더(내용/수량/단가/금액)를 찾지 못했습니다. 제공된 업로드 양식을 사용하거나 표 헤더를 포함해 주세요."
+      );
+    }
+    if (state.extracted.source === "pdf") {
+      throw new Error("PDF에서 품목을 찾지 못했습니다. 텍스트 기반 PDF인지 확인해 주세요.");
     }
   }
 

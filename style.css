@@ -794,11 +794,17 @@ body.nav-open .scrim {
 }
 
 .status {
+  margin-top: 10px;
   padding: 12px;
-  border-top: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
   background: #ffffff;
   color: #374151;
   font-size: 13px;
+}
+
+.status:empty {
+  display: none;
 }
 
 .summary {
