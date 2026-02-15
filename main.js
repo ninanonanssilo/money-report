@@ -51,7 +51,20 @@ function todayISO() {
 function setStatus(msg) {
   const m = msg ? String(msg) : "";
   if (els.status) els.status.textContent = m;
-  if (m) console.log(m);
+  // Keep console noise low in production.
+}
+
+function toast(msg, { ms = 1800 } = {}) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  const m = String(msg || "").trim();
+  if (!m) return;
+  el.textContent = m;
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => {
+    el.classList.remove("show");
+  }, Math.max(700, Number(ms) || 1800));
 }
 
 function fmtMoney(v) {
@@ -1130,7 +1143,7 @@ async function onExtract() {
 
 async function onCopyPurpose() {
   const ok = await copyText(els.purpose.value);
-  setStatus(ok ? "개요가 복사되었습니다." : "복사에 실패했습니다.");
+  toast(ok ? "개요가 복사되었습니다." : "복사에 실패했습니다.");
 }
 
 function setNavOpen(open) {
@@ -1141,7 +1154,7 @@ function setNavOpen(open) {
 
 function init() {
   els.docDate.value = els.docDate.value || todayISO();
-  setStatus("ready");
+  setStatus("대기 중");
 
   els.btnExtract.addEventListener("click", onExtract);
   els.btnAutoOutline.addEventListener("click", onAutoOutline);
@@ -1182,7 +1195,7 @@ function init() {
     const txt = (el.getAttribute("data-copy") || "").trim();
     if (!txt) return;
     const ok = await copyText(txt);
-    setStatus(ok ? "셀 내용이 복사되었습니다." : "복사에 실패했습니다.");
+    toast(ok ? "셀 내용이 복사되었습니다." : "복사에 실패했습니다.");
   });
 
   els.navToggle.addEventListener("click", () => setNavOpen(true));
