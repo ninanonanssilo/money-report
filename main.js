@@ -20,6 +20,7 @@ const els = {
   btnCopyPurpose: $("btn-copy-purpose"),
 
   extractSummary: $("extractSummary"),
+  fileResults: $("fileResults"),
   itemsTbody: $("itemsTbody"),
   itemsTfoot: $("itemsTfoot"),
 };
@@ -203,12 +204,52 @@ function computeTotal(items) {
 }
 
 function renderExtractSummary() {
-  const { source, items, total } = state.extracted;
+  const { source, items, total, totals } = state.extracted;
   const parts = [];
-  if (source) parts.push(`source: ${source}`);
-  parts.push(`items: ${items.length}`);
-  if (total) parts.push(`total: ${fmtMoney(total)} KRW`);
-  els.extractSummary.textContent = parts.join(" | ");
+
+  const itemCount = Array.isArray(items) ? items.length : 0;
+  parts.push(`품목 ${itemCount}개`);
+
+  const shipping = Number.isFinite(totals?.shipping) ? totals.shipping : null;
+  const discount = Number.isFinite(totals?.discount) ? totals.discount : null;
+  const subtotal = Number.isFinite(totals?.subtotal) ? totals.subtotal : null;
+
+  if (subtotal !== null && subtotal > 0) parts.push(`합계 ${fmtMoney(subtotal)}원`);
+  if (shipping !== null && shipping > 0) parts.push(`배송비 ${fmtMoney(shipping)}원`);
+  if (discount !== null && discount > 0) parts.push(`할인 ${fmtMoney(discount)}원`);
+
+  if (Number.isFinite(total) && total > 0) parts.push(`총액 ${fmtMoney(total)}원`);
+  else parts.push("총액 미확인");
+
+  if (source) parts.push(`(${source})`);
+
+  els.extractSummary.textContent = parts.join(" · ");
+}
+
+function renderFileResults({ ok, failed } = {}) {
+  if (!els.fileResults) return;
+  const oks = Array.isArray(ok) ? ok : [];
+  const fails = Array.isArray(failed) ? failed : [];
+
+  if (!oks.length && !fails.length) {
+    els.fileResults.innerHTML = "";
+    return;
+  }
+
+  const lines = [];
+  for (const r of oks) {
+    const name = escapeHtml(r?.filename || r?.name || "(파일)");
+    const count = Array.isArray(r?.items) ? r.items.length : 0;
+    const total = Number.isFinite(r?.total) ? ` · 총액 ${fmtMoney(r.total)}원` : "";
+    lines.push(`<div class="file-result ok"><span class="tag">성공</span><span class="name">${name}</span><span class="meta">품목 ${count}개${total}</span></div>`);
+  }
+  for (const f of fails) {
+    const name = escapeHtml(f?.name || "(파일)");
+    const msg = escapeHtml(f?.err?.message || String(f?.err || "실패"));
+    lines.push(`<div class="file-result fail"><span class="tag">실패</span><span class="name">${name}</span><span class="meta">${msg}</span></div>`);
+  }
+
+  els.fileResults.innerHTML = lines.join("");
 }
 
 function renderItems(items) {
@@ -1128,10 +1169,14 @@ async function onExtract() {
 
     renderItems(state.extracted.items);
     renderExtractSummary();
+    renderFileResults({ ok, failed });
+
     if (!failed.length) {
       setStatus(ok.length > 1 ? `추출이 완료되었습니다. (${ok.length}개 파일)` : "업로드/추출이 완료되었습니다.");
+      toast("추출이 완료되었습니다.");
     } else {
       setStatus(`추출 완료 (${ok.length}개 성공, ${failed.length}개 실패)`);
+      toast(`추출 완료: 성공 ${ok.length}개 / 실패 ${failed.length}개`, { ms: 2400 });
     }
   } catch (e) {
     console.error(e);
