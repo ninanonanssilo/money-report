@@ -459,6 +459,11 @@ body.nav-open .scrim {
   line-height: 1.35;
 }
 
+.file-result .fix {
+  color: rgba(107, 114, 128, 0.95);
+  font-weight: 600;
+}
+
 .toast {
   position: fixed;
   left: 50%;

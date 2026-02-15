@@ -226,6 +226,24 @@ function renderExtractSummary() {
   els.extractSummary.textContent = parts.join(" · ");
 }
 
+function suggestFix(filename, errMsg) {
+  const name = String(filename || "").toLowerCase();
+  const msg = String(errMsg || "");
+
+  if (name.endsWith(".pdf")) {
+    if (/암호|password|encrypted/i.test(msg)) return "해결: 암호를 해제한 PDF로 다시 저장해 주세요.";
+    if (/품목을 찾지 못/i.test(msg)) return "해결: 스캔본이면 해상도(권장 300dpi)를 높이거나, 표가 포함된 페이지가 있는지 확인해 주세요.";
+    return "해결: 스캔본/이미지 PDF일 수 있어요. 글자가 선명한 PDF로 다시 저장하면 정확도가 올라갑니다.";
+  }
+
+  if (name.endsWith(".xls") || name.endsWith(".xlsx")) {
+    if (/헤더|내용\/수량\/단가\/금액|품목 헤더/i.test(msg)) return "해결: 표의 헤더(내용/수량/단가/금액)가 포함되도록 하거나, 제공된 업로드 양식을 사용해 주세요.";
+    return "해결: 첫 시트에 품목 표가 있는지 확인해 주세요. 가능하면 제공된 업로드 양식을 사용해 주세요.";
+  }
+
+  return "해결: 지원 형식(.xls, .xlsx, .pdf)인지 확인해 주세요.";
+}
+
 function renderFileResults({ ok, failed } = {}) {
   if (!els.fileResults) return;
   const oks = Array.isArray(ok) ? ok : [];
@@ -244,9 +262,13 @@ function renderFileResults({ ok, failed } = {}) {
     lines.push(`<div class="file-result ok"><span class="tag">성공</span><span class="name">${name}</span><span class="meta">품목 ${count}개${total}</span></div>`);
   }
   for (const f of fails) {
+    const rawMsg = f?.err?.message || String(f?.err || "실패");
     const name = escapeHtml(f?.name || "(파일)");
-    const msg = escapeHtml(f?.err?.message || String(f?.err || "실패"));
-    lines.push(`<div class="file-result fail"><span class="tag">실패</span><span class="name">${name}</span><span class="meta">${msg}</span></div>`);
+    const msg = escapeHtml(rawMsg);
+    const hint = escapeHtml(suggestFix(f?.name, rawMsg));
+    lines.push(
+      `<div class="file-result fail"><span class="tag">실패</span><span class="name">${name}</span><span class="meta">${msg}<br/><span class="fix">${hint}</span></span></div>`
+    );
   }
 
   els.fileResults.innerHTML = lines.join("");
