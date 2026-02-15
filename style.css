@@ -850,6 +850,17 @@ body.nav-open .scrim {
   white-space: nowrap;
 }
 
+.sum-row .sum-label {
+  text-align: right;
+  font-weight: 800;
+  background: #fcfcfd;
+}
+
+.sum-row .sum-amt {
+  font-weight: 900;
+  background: #fcfcfd;
+}
+
 .w-no {
   width: 70px;
 }

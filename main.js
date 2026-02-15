@@ -21,6 +21,7 @@ const els = {
 
   extractSummary: $("extractSummary"),
   itemsTbody: $("itemsTbody"),
+  itemsTfoot: $("itemsTfoot"),
 };
 
 const state = {
@@ -28,6 +29,7 @@ const state = {
     source: null,
     items: [],
     total: null,
+    totals: null, // { subtotal, shipping, discount, grandTotal }
     rawText: "",
     rawRows: null, // for assisted extraction on messy formats
     pageImages: null, // data URLs for scanned/image-only PDFs (AI vision)
@@ -35,7 +37,7 @@ const state = {
 };
 
 function blankExtracted() {
-  return { source: null, items: [], total: null, rawText: "", rawRows: null, pageImages: null };
+  return { source: null, items: [], total: null, totals: null, rawText: "", rawRows: null, pageImages: null };
 }
 
 function todayISO() {
@@ -198,6 +200,7 @@ function renderExtractSummary() {
 
 function renderItems(items) {
   els.itemsTbody.innerHTML = "";
+  if (els.itemsTfoot) els.itemsTfoot.innerHTML = "";
 
   const normalized = normalizeItems(items);
   normalized.forEach((it, idx) => {
@@ -221,6 +224,39 @@ function renderItems(items) {
     `;
     els.itemsTbody.appendChild(tr);
   });
+
+  // Render extracted totals below the item list (do not mix them into item rows).
+  if (!els.itemsTfoot) return;
+
+  const totals = state.extracted?.totals || {};
+  const subtotal = Number.isFinite(totals.subtotal) ? totals.subtotal : computeTotal(normalized);
+  const shipping = Number.isFinite(totals.shipping) ? totals.shipping : null;
+  const discount = Number.isFinite(totals.discount) ? totals.discount : null;
+
+  let grand = Number.isFinite(totals.grandTotal) ? totals.grandTotal : null;
+  if (!Number.isFinite(grand)) {
+    const base = Number.isFinite(subtotal) ? subtotal : null;
+    const ship = Number.isFinite(shipping) ? shipping : 0;
+    const disc = Number.isFinite(discount) ? discount : 0;
+    const derived = base !== null ? base + ship - disc : null;
+    grand = derived !== null && derived > 0 ? derived : Number.isFinite(state.extracted?.total) ? state.extracted.total : null;
+  }
+
+  const rows = [];
+  if (Number.isFinite(subtotal) && subtotal > 0) rows.push({ label: "합계", amount: subtotal });
+  if (Number.isFinite(shipping) && shipping > 0) rows.push({ label: "배송비", amount: shipping });
+  if (Number.isFinite(grand) && grand > 0) rows.push({ label: "총 구매금액", amount: grand });
+  if (!rows.length) return;
+
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.className = "sum-row";
+    tr.innerHTML = `
+      <td colspan="5" class="sum-label">${escapeHtml(r.label)}</td>
+      <td class="num sum-amt">${escapeHtml(fmtMoney(r.amount))}원</td>
+    `;
+    els.itemsTfoot.appendChild(tr);
+  }
 }
 
 async function loadScript(src) {
@@ -492,6 +528,15 @@ function extractTotalsFromHtmlDoc(doc) {
   };
 }
 
+function isSummaryRowCells(cells) {
+  const text = (cells || [])
+    .map((c) => String(c || "").replace(/\u00a0/g, " ").trim())
+    .filter(Boolean)
+    .join(" ");
+  if (!text) return false;
+  return /^(합계|배송비|총\s*구매금액|총구매금액)\b/.test(text);
+}
+
 async function extractFromHtmlXls(file) {
   const html = await file.text();
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -537,6 +582,7 @@ async function extractFromXlsx(file) {
     const col = mapCols(header);
     for (let i = headerIdx + 1; i < rows.length; i++) {
       const r = rows[i];
+      if (isSummaryRowCells(r)) continue;
       const name = pickCell(r, col.name);
       const spec = pickCell(r, col.spec);
       const qty = parseNum(pickCell(r, col.qty));
@@ -549,10 +595,29 @@ async function extractFromXlsx(file) {
 
   const normalized = normalizeItems(items);
   const computed = computeTotal(normalized);
-  const total =
-    Number.isFinite(htmlTotals?.grandTotal) ? htmlTotals.grandTotal : computed !== null ? computed : null;
+  const shipping = Number.isFinite(htmlTotals?.shipping) ? htmlTotals.shipping : null;
+  const discount = Number.isFinite(htmlTotals?.discount) ? htmlTotals.discount : null;
+  const derivedGrand =
+    computed !== null ? computed + (Number.isFinite(shipping) ? shipping : 0) - (Number.isFinite(discount) ? discount : 0) : null;
+  const grandTotal =
+    Number.isFinite(htmlTotals?.grandTotal) ? htmlTotals.grandTotal : derivedGrand !== null && derivedGrand > 0 ? derivedGrand : null;
+
+  const total = grandTotal !== null ? grandTotal : computed !== null ? computed : null;
   // Keep more rows for server-assisted extraction when local header detection fails.
-  state.extracted = { source: "xlsx", items: normalized, total, rawText: "", rawRows: rows.slice(0, 2000) };
+  state.extracted = {
+    source: "xlsx",
+    items: normalized,
+    total,
+    totals: {
+      subtotal: computed,
+      shipping,
+      discount,
+      grandTotal,
+    },
+    rawText: "",
+    rawRows: rows.slice(0, 2000),
+    pageImages: null,
+  };
 }
 
 function findHeaderRow(rows, { maxScan = 250 } = {}) {
