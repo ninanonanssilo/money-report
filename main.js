@@ -287,23 +287,23 @@ async function renderPdfPageToCanvas(pdfDoc, pageNumber, scale) {
   return canvas;
 }
 
-async function pdfToPageImages(file, { maxPages, scale, quality, onProgress }) {
-  const pdfjs = await loadPdfJs();
-  const ab = await file.arrayBuffer();
-  const pdfDoc = await pdfjs.getDocument({ data: ab }).promise;
+async function renderPdfPageToDataUrl(pdfDoc, pageNumber, { scale, quality }) {
+  const tries = [
+    { scale: scale ?? 1.15, quality: quality ?? 0.72 },
+    { scale: Math.max(0.9, (scale ?? 1.15) * 0.9), quality: 0.65 },
+    { scale: 0.9, quality: 0.6 },
+  ];
 
-  const pages = maxPages ? Math.min(pdfDoc.numPages, Math.max(1, maxPages)) : pdfDoc.numPages;
-  const out = [];
-
-  for (let p = 1; p <= pages; p++) {
-    onProgress?.(`스캔 PDF 페이지 렌더링 중... (${p}/${pages})`);
-    const canvas = await renderPdfPageToCanvas(pdfDoc, p, scale || 1.6);
-    // JPEG keeps payload size reasonable while staying readable for tables.
-    const dataUrl = canvas.toDataURL("image/jpeg", typeof quality === "number" ? quality : 0.78);
-    out.push(dataUrl);
+  for (const t of tries) {
+    const canvas = await renderPdfPageToCanvas(pdfDoc, pageNumber, t.scale);
+    const dataUrl = canvas.toDataURL("image/jpeg", t.quality);
+    // Keep under server guardrail (~2.5MB per image).
+    if (dataUrl.length <= 2400000) return dataUrl;
   }
 
-  return out;
+  // Last resort: return the last attempt even if large; server may drop it.
+  const canvas = await renderPdfPageToCanvas(pdfDoc, pageNumber, 0.9);
+  return canvas.toDataURL("image/jpeg", 0.6);
 }
 
 async function extractPdfTextQuick(file, { maxPages, onProgress } = {}) {
@@ -335,6 +335,62 @@ async function extractPdfTextQuick(file, { maxPages, onProgress } = {}) {
   return all.trim();
 }
 
+async function extractScannedPdfViaAi(file, { scale, quality, chunkSize }) {
+  const pdfjs = await loadPdfJs();
+  const ab = await file.arrayBuffer();
+  const pdfDoc = await pdfjs.getDocument({ data: ab }).promise;
+
+  const totalPages = pdfDoc.numPages || 1;
+  const chunk = Math.max(1, Number(chunkSize) || 4);
+
+  const allItems = [];
+  let shipping = 0;
+  let discount = 0;
+  let statedTotal = 0;
+
+  for (let start = 1; start <= totalPages; start += chunk) {
+    const end = Math.min(totalPages, start + chunk - 1);
+    const imgs = [];
+
+    for (let p = start; p <= end; p++) {
+      setStatus(`스캔 PDF 페이지 렌더링 중... (${p}/${totalPages})`);
+      imgs.push(await renderPdfPageToDataUrl(pdfDoc, p, { scale, quality }));
+    }
+
+    setStatus(`AI 추출 중... (${start}-${end}/${totalPages})`);
+    const data = await callExtractApi({
+      source: "pdf",
+      filename: file.name,
+      rows: null,
+      rawText: "",
+      pageImages: imgs,
+    });
+
+    const items = normalizeItems(data?.items || []);
+    allItems.push(...items);
+
+    const ship = Number.isFinite(data?.shipping) ? data.shipping : Number.isFinite(data?.totals?.shipping) ? data.totals.shipping : 0;
+    const disc = Number.isFinite(data?.discount) ? data.discount : Number.isFinite(data?.totals?.discount) ? data.totals.discount : 0;
+    const stated = Number.isFinite(data?.statedTotal) ? data.statedTotal : 0;
+
+    // Prefer the maximum shipping/discount candidate across chunks (avoids double count when repeated).
+    if (ship > shipping) shipping = ship;
+    if (disc > discount) discount = disc;
+    if (stated > statedTotal) statedTotal = stated;
+  }
+
+  const subtotal = computeTotal(allItems) ?? 0;
+  const total = subtotal + (shipping || 0) - (discount || 0);
+
+  return {
+    items: allItems,
+    total: total > 0 ? total : null,
+    shipping: shipping || null,
+    discount: discount || null,
+    statedTotal: statedTotal || null,
+  };
+}
+
 function looksLikeHtmlBytes(bytes) {
   // Some marketplaces export "xls" as HTML tables.
   // Detect by first non-whitespace byte being '<' (0x3c) or BOM + '<'.
@@ -362,20 +418,78 @@ function pickBestTable(doc) {
   const tables = Array.from(doc.querySelectorAll("table"));
   if (!tables.length) return null;
 
-  const keys = ["품목", "항목", "내용", "규격", "수량", "단가", "금액", "합계", "상품", "수 량", "판매가"];
   let best = { score: -1, rows: null };
 
   for (const t of tables) {
     const rows = tableToRows(t);
     if (rows.length < 2) continue;
-    const joined = rows.slice(0, 40).map((r) => r.join(" ")).join(" ");
+
     let score = 0;
-    for (const k of keys) if (joined.includes(k)) score += 2;
+    const headerIdx = findHeaderRow(rows, { maxScan: Math.min(rows.length, 400) });
+    if (headerIdx >= 0) {
+      // Strongly prefer tables that look like an item list (header + many data rows).
+      score += 1000;
+      score += Math.max(0, 200 - headerIdx); // earlier header is better
+      const header = rows[headerIdx].map((c) => String(c || "").trim());
+      const col = mapCols(header);
+      let itemCount = 0;
+      for (let i = headerIdx + 1; i < rows.length; i++) {
+        const r = rows[i];
+        const name = pickCell(r, col.name);
+        const spec = pickCell(r, col.spec);
+        const unitPrice = parseNum(pickCell(r, col.unitPrice));
+        const amount = parseNum(pickCell(r, col.amount));
+        if (!name && !Number.isFinite(amount) && !Number.isFinite(unitPrice) && !spec) continue;
+        itemCount++;
+      }
+      score += Math.min(300, itemCount) * 10;
+    } else {
+      // Fallback heuristic: keyword presence within the first N rows.
+      const joined = rows
+        .slice(0, 200)
+        .map((r) => r.join(" "))
+        .join(" ");
+      const keys = ["상품명", "품목", "항목", "내용", "규격", "수량", "단가", "판매가", "공급가액", "공급합계", "금액", "합계", "총액"];
+      for (const k of keys) if (joined.includes(k)) score += 2;
+    }
+
     const maxCols = Math.max(...rows.map((r) => r.length));
     score += Math.min(20, rows.length) + Math.min(10, maxCols);
     if (score > best.score) best = { score, rows };
   }
   return best.rows;
+}
+
+function extractTotalsFromHtmlDoc(doc) {
+  const text = String(doc?.body?.textContent || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const findAll = (labels) => {
+    const out = [];
+    for (const label of labels) {
+      // Capture a KRW amount that appears after the label.
+      const re = new RegExp(`${label}\\s*([0-9][0-9,]*)\\s*원`);
+      const m = text.match(re);
+      if (!m) continue;
+      const n = parseNum(m[1]);
+      if (Number.isFinite(n)) out.push(n);
+    }
+    return out;
+  };
+
+  // Many HTML-exported "xls" quote formats include these labels (e.g., Auction/Gmarket).
+  const grandCandidates = findAll(["총 구매금액", "총구매금액", "결제금액", "총액", "총 금액"]);
+  const shippingCandidates = findAll(["배송비"]);
+  const discountCandidates = findAll(["할인금액", "할인 금액"]);
+
+  const pickMax = (arr) => (arr.length ? Math.max(...arr) : null);
+  return {
+    grandTotal: pickMax(grandCandidates),
+    shipping: pickMax(shippingCandidates),
+    discount: pickMax(discountCandidates),
+  };
 }
 
 async function extractFromHtmlXls(file) {
@@ -386,17 +500,20 @@ async function extractFromHtmlXls(file) {
 }
 
 async function extractFromXlsx(file) {
-  if (!window.XLSX) {
-    await loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js");
-    if (!window.XLSX) throw new Error("엑셀 파서 로드에 실패했습니다. 네트워크 상태를 확인하세요.");
-  }
-
   // Some .xls files are actually HTML. Detect and parse accordingly.
   const head = new Uint8Array(await file.slice(0, 256).arrayBuffer());
   let rows;
+  let htmlTotals = null;
   if (looksLikeHtmlBytes(head)) {
-    rows = await extractFromHtmlXls(file);
+    const html = await file.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    rows = pickBestTable(doc) || [];
+    htmlTotals = extractTotalsFromHtmlDoc(doc);
   } else {
+    if (!window.XLSX) {
+      await loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js");
+      if (!window.XLSX) throw new Error("엑셀 파서 로드에 실패했습니다. 네트워크 상태를 확인하세요.");
+    }
     const ab = await file.arrayBuffer();
     try {
       const wb = window.XLSX.read(ab, { type: "array" });
@@ -406,11 +523,14 @@ async function extractFromXlsx(file) {
     } catch (e) {
       // Fallback: try HTML parse even if the extension says xls/xlsx.
       console.warn("XLSX.read failed; falling back to HTML parse:", e);
-      rows = await extractFromHtmlXls(file);
+      const html = await file.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      rows = pickBestTable(doc) || [];
+      htmlTotals = extractTotalsFromHtmlDoc(doc);
     }
   }
 
-  const headerIdx = findHeaderRow(rows);
+  const headerIdx = findHeaderRow(rows, { maxScan: Math.min(rows.length, 400) });
   const items = [];
   if (headerIdx >= 0) {
     const header = rows[headerIdx].map((c) => String(c).trim());
@@ -428,40 +548,38 @@ async function extractFromXlsx(file) {
   }
 
   const normalized = normalizeItems(items);
-  const total = computeTotal(normalized);
-  state.extracted = { source: "xlsx", items: normalized, total, rawText: "", rawRows: rows.slice(0, 240) };
+  const computed = computeTotal(normalized);
+  const total =
+    Number.isFinite(htmlTotals?.grandTotal) ? htmlTotals.grandTotal : computed !== null ? computed : null;
+  // Keep more rows for server-assisted extraction when local header detection fails.
+  state.extracted = { source: "xlsx", items: normalized, total, rawText: "", rawRows: rows.slice(0, 2000) };
 }
 
-function findHeaderRow(rows) {
-  const keys = [
-    "품목",
-    "항목",
-    "내용",
-    "규격",
-    "옵션",
-    "모델",
-    "상품명",
-    "상품",
+function findHeaderRow(rows, { maxScan = 250 } = {}) {
+  const nameKeys = ["상품명", "품목", "항목", "내용", "내역", "상품"];
+  const qtyOrMoneyKeys = [
     "수량",
     "주문수량",
     "구매수량",
     "단가",
     "판매가",
     "금액",
+    "공급가액",
+    "공급합계",
     "합계",
-    "합계금액",
-    "주문금액",
-    "결제금액",
     "총액",
     "총금액",
+    "결제금액",
   ];
-  const maxScan = Math.min(rows.length, 50);
-  for (let i = 0; i < maxScan; i++) {
-    const row = rows[i].map((c) => String(c || "").trim());
+
+  const scanN = Math.min(rows.length, Math.max(1, Number(maxScan) || 250));
+  for (let i = 0; i < scanN; i++) {
+    const row = (rows[i] || []).map((c) => String(c || "").trim());
+    if (row.length < 4) continue;
     const joined = row.join(" ");
-    let score = 0;
-    for (const k of keys) if (joined.includes(k)) score++;
-    if (score >= 2 && row.length >= 4) return i;
+    const hasName = nameKeys.some((k) => joined.includes(k));
+    const hasQtyOrMoney = qtyOrMoneyKeys.some((k) => joined.includes(k));
+    if (hasName && hasQtyOrMoney) return i;
   }
   return -1;
 }
@@ -477,7 +595,23 @@ function mapCols(header) {
   const spec = idxOf(by(["규격", "사양", "옵션", "모델", "모델명", "spec", "SPEC"]));
   const qty = idxOf(by(["수량", "수 량", "qty", "QTY", "주문수량", "구매수량"]));
   const unitPrice = idxOf(by(["단가", "단 가", "판매가", "판매 단가", "unit", "price", "단위금액", "단위 금액"]));
-  const amount = idxOf(by(["금액", "공급가", "공급가액", "합계", "합계금액", "주문금액", "결제금액", "총액", "총금액", "amount"]));
+  // Prefer "line total" columns (after discount) when present, e.g. '공급합계'.
+  const amount = idxOf(
+    by([
+      "공급합계",
+      "공급 합계",
+      "결제금액",
+      "총액",
+      "총금액",
+      "합계금액",
+      "합계 금액",
+      "금액",
+      "공급가액",
+      "공급가",
+      "주문금액",
+      "amount",
+    ])
+  );
 
   return { name, spec, qty, unitPrice, amount };
 }
@@ -509,23 +643,23 @@ async function extractFromPdf(file) {
 
   // If text is too short, treat as scanned/image-only PDF and send page images for AI vision.
   const compactLen = text.replace(/\s+/g, "").length;
-  let pageImages = null;
   if (compactLen < 80) {
-    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. 이미지 기반 추출을 진행합니다... (GPT-5.2)");
-    try {
-      pageImages = await pdfToPageImages(file, {
-        maxPages: null, // all pages
-        scale: small ? 1.05 : 1.2,
-        quality: 0.76,
-        onProgress: (m) => setStatus(m),
-      });
-    } catch (e) {
-      console.warn("pdf page image render failed:", e);
-    }
-    if (!pageImages?.length) {
-      throw new Error("스캔 PDF로 보이지만 페이지 이미지를 만들지 못했습니다. (브라우저/파일을 바꿔 다시 시도해 주세요)");
-    }
-    setStatus("이미지 준비 완료. 품목 구조화를 진행합니다...");
+    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. 전체 페이지 AI 추출을 진행합니다... (GPT-5.2)");
+    const res = await extractScannedPdfViaAi(file, {
+      scale: small ? 1.0 : 1.15,
+      quality: 0.72,
+      chunkSize: small ? 2 : 4,
+    });
+
+    state.extracted = {
+      source: "pdf",
+      items: res.items,
+      total: res.total,
+      rawText: "",
+      rawRows: null,
+      pageImages: null,
+    };
+    return;
   }
 
   state.extracted = {
@@ -534,13 +668,14 @@ async function extractFromPdf(file) {
     total: null,
     rawText: String(text || "").trim(),
     rawRows: null,
-    pageImages,
+    pageImages: null,
   };
 }
 
 function toDocPayload() {
   const items = normalizeItems(state.extracted.items);
-  const total = computeTotal(items) ?? state.extracted.total;
+  // Prefer server-determined grand total (includes shipping/discount) over recomputing from line items.
+  const total = state.extracted.total ?? computeTotal(items);
 
   return {
     meta: {
@@ -730,7 +865,7 @@ async function extractOneFile(f) {
       if (items.length) {
         state.extracted = {
           ...state.extracted,
-          source: data.mode === "ai" ? "ai" : state.extracted.source,
+          source: String(data.mode || "").startsWith("ai") ? "ai" : state.extracted.source,
           items,
           total,
         };
@@ -811,7 +946,8 @@ async function onExtract() {
         .map((r) => r.total)
         .filter((n) => Number.isFinite(n))
         .reduce((a, b) => a + b, 0);
-      const total = computed ?? (summed > 0 ? summed : null);
+      // Prefer summing per-file totals (which may include shipping/discount) over recomputing from merged items.
+      const total = (summed > 0 ? summed : null) ?? computed;
       const rawText = ok
         .map((r) => (r.rawText ? `----- ${r.filename} -----\n${r.rawText}` : ""))
         .filter(Boolean)
