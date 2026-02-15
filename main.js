@@ -243,6 +243,7 @@ function renderItems(items) {
 
   const rows = [];
   if (Number.isFinite(subtotal) && subtotal > 0) rows.push({ label: "합계", amount: subtotal });
+  if (Number.isFinite(discount) && discount > 0) rows.push({ label: "할인금액", amount: -discount });
   if (Number.isFinite(shipping) && shipping > 0) rows.push({ label: "배송비", amount: shipping });
   if (Number.isFinite(grand) && grand > 0) rows.push({ label: "총 구매금액", amount: grand });
   if (!rows.length) return;
@@ -504,20 +505,20 @@ function extractTotalsFromHtmlDoc(doc) {
   const findAll = (labels) => {
     const out = [];
     for (const label of labels) {
-      // Capture a KRW amount that appears after the label.
-      const re = new RegExp(`${label}\\s*([0-9][0-9,]*)\\s*원`);
-      const m = text.match(re);
-      if (!m) continue;
-      const n = parseNum(m[1]);
-      if (Number.isFinite(n)) out.push(n);
+      // Capture KRW amounts that appear after the label. Some documents omit the '원' suffix.
+      const re = new RegExp(`${label}\\s*(-?[0-9][0-9,]*)\\s*(?:원)?`, "g");
+      for (const m of text.matchAll(re)) {
+        const n = parseNum(m?.[1]);
+        if (Number.isFinite(n)) out.push(n);
+      }
     }
     return out;
   };
 
   // Many HTML-exported "xls" quote formats include these labels (e.g., Auction/Gmarket).
-  const grandCandidates = findAll(["총 구매금액", "총구매금액", "결제금액", "총액", "총 금액"]);
+  const grandCandidates = findAll(["총 구매금액", "총구매금액", "결제금액", "최종견적금액", "합계 금액", "합계금액", "총액", "총 금액"]);
   const shippingCandidates = findAll(["배송비"]);
-  const discountCandidates = findAll(["할인금액", "할인 금액"]);
+  const discountCandidates = findAll(["할인금액", "할인 금액"]).map((n) => Math.abs(n));
 
   const pickMax = (arr) => (arr.length ? Math.max(...arr) : null);
   return {
@@ -525,6 +526,47 @@ function extractTotalsFromHtmlDoc(doc) {
     shipping: pickMax(shippingCandidates),
     discount: pickMax(discountCandidates),
   };
+}
+
+function extractListTfootTotals(doc) {
+  // Auction/Gmarket HTML "xls" format: table.list > tfoot contains
+  // [합계, 공급가액합, 할인금액합, 공급합계합] (no explicit '할인금액' label in the footer cells).
+  const tables = Array.from(doc.querySelectorAll("table.list"));
+  if (!tables.length) return { subtotalBefore: null, discount: null, subtotalAfter: null };
+
+  const pickTable = () => {
+    let best = null;
+    let bestScore = -1;
+    for (const t of tables) {
+      const rowCount = t.querySelectorAll("tbody tr").length;
+      const colCount = t.querySelectorAll("thead th").length;
+      const score = rowCount * 10 + colCount;
+      if (score > bestScore) {
+        best = t;
+        bestScore = score;
+      }
+    }
+    return best;
+  };
+
+  const t = pickTable();
+  const tr = t?.querySelector("tfoot tr");
+  if (!tr) return { subtotalBefore: null, discount: null, subtotalAfter: null };
+
+  const cells = Array.from(tr.querySelectorAll("th,td")).map((td) =>
+    String(td.textContent || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+
+  const nums = cells
+    .map((c) => parseNum(c))
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  if (nums.length < 3) return { subtotalBefore: null, discount: null, subtotalAfter: null };
+
+  const last3 = nums.slice(-3);
+  return { subtotalBefore: last3[0], discount: last3[1], subtotalAfter: last3[2] };
 }
 
 function isSummaryRowCells(cells) {
@@ -552,7 +594,7 @@ async function extractFromXlsx(file) {
     const html = await file.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
     rows = pickBestTable(doc) || [];
-    htmlTotals = extractTotalsFromHtmlDoc(doc);
+    htmlTotals = { ...extractTotalsFromHtmlDoc(doc), ...extractListTfootTotals(doc) };
   } else {
     if (!window.XLSX) {
       await loadScript("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js");
@@ -570,7 +612,7 @@ async function extractFromXlsx(file) {
       const html = await file.text();
       const doc = new DOMParser().parseFromString(html, "text/html");
       rows = pickBestTable(doc) || [];
-      htmlTotals = extractTotalsFromHtmlDoc(doc);
+      htmlTotals = { ...extractTotalsFromHtmlDoc(doc), ...extractListTfootTotals(doc) };
     }
   }
 
@@ -596,22 +638,33 @@ async function extractFromXlsx(file) {
   const computed = computeTotal(normalized);
   const shipping = Number.isFinite(htmlTotals?.shipping) ? htmlTotals.shipping : null;
   const discount = Number.isFinite(htmlTotals?.discount) ? htmlTotals.discount : null;
-  const derivedGrand =
-    computed !== null ? computed + (Number.isFinite(shipping) ? shipping : 0) - (Number.isFinite(discount) ? discount : 0) : null;
+  const subtotalAfterRaw = Number.isFinite(htmlTotals?.subtotalAfter) ? htmlTotals.subtotalAfter : null;
+  const subtotalBeforeRaw = Number.isFinite(htmlTotals?.subtotalBefore) ? htmlTotals.subtotalBefore : null;
+
+  // Prefer the post-discount subtotal when available (공급합계 합).
+  const subtotalAfter =
+    subtotalAfterRaw !== null
+      ? subtotalAfterRaw
+      : subtotalBeforeRaw !== null && Number.isFinite(discount)
+        ? subtotalBeforeRaw - discount
+        : computed;
+
+  const derivedGrand = subtotalAfter !== null ? subtotalAfter + (Number.isFinite(shipping) ? shipping : 0) : null;
   const grandTotal =
     Number.isFinite(htmlTotals?.grandTotal) ? htmlTotals.grandTotal : derivedGrand !== null && derivedGrand > 0 ? derivedGrand : null;
 
-  const total = grandTotal !== null ? grandTotal : computed !== null ? computed : null;
+  const total = grandTotal !== null ? grandTotal : subtotalAfter !== null ? subtotalAfter : null;
   // Keep more rows for server-assisted extraction when local header detection fails.
   state.extracted = {
     source: "xlsx",
     items: normalized,
     total,
     totals: {
-      subtotal: computed,
+      subtotal: subtotalAfter,
       shipping,
       discount,
       grandTotal,
+      subtotalBefore: subtotalBeforeRaw,
     },
     rawText: "",
     rawRows: rows.slice(0, 2000),
