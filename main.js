@@ -16,7 +16,6 @@ const els = {
   notes: $("notes"),
 
   btnExtract: $("btn-extract"),
-  btnChatgpt: $("btn-chatgpt"),
   btnAutoOutline: $("btn-auto-outline"),
   btnCopyPurpose: $("btn-copy-purpose"),
 
@@ -195,7 +194,6 @@ function renderExtractSummary() {
   parts.push(`items: ${items.length}`);
   if (total) parts.push(`total: ${fmtMoney(total)} KRW`);
   els.extractSummary.textContent = parts.join(" | ");
-  updateChatgptButton();
 }
 
 function renderItems(items) {
@@ -289,26 +287,26 @@ async function renderPdfPageToCanvas(pdfDoc, pageNumber, scale) {
   return canvas;
 }
 
-async function pdfToPageImages(file, { maxPages, scale, onProgress }) {
+async function pdfToPageImages(file, { maxPages, scale, quality, onProgress }) {
   const pdfjs = await loadPdfJs();
   const ab = await file.arrayBuffer();
   const pdfDoc = await pdfjs.getDocument({ data: ab }).promise;
 
-  const pages = Math.min(pdfDoc.numPages, Math.max(1, maxPages || 1));
+  const pages = maxPages ? Math.min(pdfDoc.numPages, Math.max(1, maxPages)) : pdfDoc.numPages;
   const out = [];
 
   for (let p = 1; p <= pages; p++) {
     onProgress?.(`스캔 PDF 페이지 렌더링 중... (${p}/${pages})`);
     const canvas = await renderPdfPageToCanvas(pdfDoc, p, scale || 1.6);
     // JPEG keeps payload size reasonable while staying readable for tables.
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    const dataUrl = canvas.toDataURL("image/jpeg", typeof quality === "number" ? quality : 0.78);
     out.push(dataUrl);
   }
 
   return out;
 }
 
-async function extractPdfTextQuick(file, { maxPages }) {
+async function extractPdfTextQuick(file, { maxPages, onProgress } = {}) {
   const ab = await file.arrayBuffer();
   const pdfjs = await loadPdfJs();
 
@@ -325,8 +323,9 @@ async function extractPdfTextQuick(file, { maxPages }) {
   const doc = await loadingTask.promise;
 
   let all = "";
-  const pages = Math.min(doc.numPages, Math.max(1, maxPages || 1));
+  const pages = maxPages ? Math.min(doc.numPages, Math.max(1, maxPages)) : doc.numPages;
   for (let p = 1; p <= pages; p++) {
+    onProgress?.(`PDF 텍스트 추출 중... (${p}/${pages})`);
     const page = await doc.getPage(p);
     const content = await page.getTextContent();
     const text = content.items.map((it) => it.str).join(" ");
@@ -498,12 +497,12 @@ function parseNum(s) {
 
 async function extractFromPdf(file) {
   const small = isSmallScreen();
-  const maxPages = small ? 2 : 3;
+  const maxPages = null; // all pages
 
-  setStatus(`PDF 읽는 중... (${maxPages}p)`);
+  setStatus("PDF 읽는 중... (전체 페이지)");
   let text = "";
   try {
-    text = await extractPdfTextQuick(file, { maxPages });
+    text = await extractPdfTextQuick(file, { maxPages, onProgress: (m) => setStatus(m) });
   } catch (e) {
     console.warn("pdf text extract failed:", e);
   }
@@ -515,8 +514,9 @@ async function extractFromPdf(file) {
     setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. 이미지 기반 추출을 진행합니다... (GPT-5.2)");
     try {
       pageImages = await pdfToPageImages(file, {
-        maxPages: small ? 1 : 2,
-        scale: small ? 1.35 : 1.6,
+        maxPages: null, // all pages
+        scale: small ? 1.05 : 1.2,
+        quality: 0.76,
         onProgress: (m) => setStatus(m),
       });
     } catch (e) {
@@ -570,7 +570,7 @@ async function callExtractApi({ source, filename, rows, rawText, pageImages }) {
   const res = await fetch("/api/extract", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source, filename, rows, rawText, pageImages }),
+    body: JSON.stringify({ source, filename, rows, rawText, pageImages, forceAI: true }),
   });
 
   const txt = await res.text();
@@ -649,45 +649,6 @@ function setBusy(busy) {
   els.btnExtract.disabled = b;
   els.btnCopyPurpose.disabled = b;
   els.btnAutoOutline.disabled = b;
-  updateChatgptButton();
-}
-
-function updateChatgptButton() {
-  if (!els.btnChatgpt) return;
-  const hasSomething =
-    (Array.isArray(state.extracted.items) && state.extracted.items.length) || String(state.extracted.rawText || "").trim().length;
-  els.btnChatgpt.disabled = els.btnExtract.disabled || !hasSomething;
-}
-
-function buildChatgptReviewPrompt() {
-  const items = normalizeItems(state.extracted.items || []);
-  const total = computeTotal(items) ?? state.extracted.total ?? null;
-  const subject = String(els.subject?.value || "").trim();
-  const rawText = String(state.extracted.rawText || "").trim();
-  const rawTextShort = rawText.length > 8000 ? rawText.slice(0, 8000) + "\n...(truncated)" : rawText;
-
-  const payload = {
-    subject: subject || null,
-    source: state.extracted.source || null,
-    extracted: { items, total },
-    notes: "원문에서 금액/수량/단가가 빠지거나 잘못 읽힌 부분을 찾아 수정안을 제시해 주세요. 숫자는 근거가 없으면 추정하지 말고 null로 두세요.",
-    rawText: rawTextShort || null,
-  };
-
-  return (
-    "아래 JSON은 견적서(엑셀/PDF)에서 추출한 품목 목록입니다.\n" +
-    "1) 각 행의 수량/단가/금액을 검증하고, 금액이 비었지만 수량*단가가 있으면 금액을 계산해 채워주세요.\n" +
-    "2) 잘못된 숫자(자리수/콤마/소수점)나 합계 불일치가 있으면 지적하고 수정안을 주세요.\n" +
-    "3) 근거 없는 값은 절대 만들어내지 말고 null로 유지하세요.\n\n" +
-    JSON.stringify(payload, null, 2)
-  );
-}
-
-async function onChatgptReview() {
-  const prompt = buildChatgptReviewPrompt();
-  const ok = await copyText(prompt);
-  window.open("https://chatgpt.com/", "_blank", "noopener,noreferrer");
-  setStatus(ok ? "ChatGPT 검증용 내용이 복사되었습니다. 새 탭에 붙여넣으세요." : "복사에 실패했습니다.");
 }
 
 async function onAutoOutline() {
@@ -889,7 +850,6 @@ function init() {
   setStatus("ready");
 
   els.btnExtract.addEventListener("click", onExtract);
-  els.btnChatgpt?.addEventListener("click", onChatgptReview);
   els.btnAutoOutline.addEventListener("click", onAutoOutline);
   els.btnCopyPurpose.addEventListener("click", onCopyPurpose);
 

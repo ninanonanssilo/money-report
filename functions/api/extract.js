@@ -230,14 +230,17 @@ function buildPrompt({ source, filename, rows, rawText, pageImages, initialItems
 function normalizePageImages(v) {
   if (!Array.isArray(v)) return [];
   const out = [];
+  let totalLen = 0;
   for (const x of v) {
     if (typeof x !== "string") continue;
     const s = x.trim();
     if (!s.startsWith("data:image/")) continue;
     // Guardrail: avoid huge payloads / abuse.
     if (s.length > 2500000) continue;
+    if (totalLen + s.length > 12000000) break;
     out.push(s);
-    if (out.length >= 3) break;
+    totalLen += s.length;
+    if (out.length >= 12) break;
   }
   return out;
 }
@@ -372,6 +375,7 @@ export async function onRequestPost(context) {
     const rows = body?.rows || null;
     const rawText = body?.rawText || "";
     const pageImages = body?.pageImages || null;
+    const forceAI = Boolean(body?.forceAI);
     const rev = context.env?.CF_PAGES_COMMIT_SHA || null;
 
     // 1) Deterministic extraction first (works without AI key).
@@ -400,7 +404,13 @@ export async function onRequestPost(context) {
     }
 
     const model = context.env?.OPENAI_MODEL;
-    if (deterministic.items.length >= 1) {
+    const wantAI =
+      forceAI ||
+      (asString(source).trim().toLowerCase() === "pdf") ||
+      (Array.isArray(pageImages) && pageImages.length > 0) ||
+      asString(rawText).trim().length > 0;
+
+    if (!wantAI && deterministic.items.length >= 1) {
       if (!shouldRefineWithAI({ items: deterministic.items, total: detTotals.grandTotal })) {
         return jsonResponse(
           {
@@ -416,25 +426,29 @@ export async function onRequestPost(context) {
           { headers: okCors() }
         );
       }
-      const ai = await callOpenAI({
-        apiKey,
-        model,
-        source,
-        filename,
-        rows,
-        rawText,
-        pageImages,
-        initialItems: deterministic.items,
-      });
-      return jsonResponse(
-        { mode: "ai_refine", items: ai.items, shipping: ai.shipping, discount: ai.discount, statedTotal: ai.statedTotal, totals: ai.totals, total: ai.totals?.grandTotal ?? null, rev },
-        { headers: okCors() }
-      );
     }
 
-    const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages, initialItems: null });
+    const ai = await callOpenAI({
+      apiKey,
+      model,
+      source,
+      filename,
+      rows,
+      rawText,
+      pageImages,
+      initialItems: deterministic.items.length ? deterministic.items : null,
+    });
     return jsonResponse(
-      { mode: "ai", items: ai.items, shipping: ai.shipping, discount: ai.discount, statedTotal: ai.statedTotal, totals: ai.totals, total: ai.totals?.grandTotal ?? null, rev },
+      {
+        mode: forceAI ? "ai_forced" : deterministic.items.length ? "ai_refine" : "ai",
+        items: ai.items,
+        shipping: ai.shipping,
+        discount: ai.discount,
+        statedTotal: ai.statedTotal,
+        totals: ai.totals,
+        total: ai.totals?.grandTotal ?? null,
+        rev,
+      },
       { headers: okCors() }
     );
   } catch (e) {
