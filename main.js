@@ -772,6 +772,12 @@ async function extractFromPdf(file) {
       source: "pdf",
       items: res.items,
       total: res.total,
+      totals: {
+        subtotal: computeTotal(res.items) ?? null,
+        shipping: Number.isFinite(res.shipping) ? res.shipping : null,
+        discount: Number.isFinite(res.discount) ? res.discount : null,
+        grandTotal: Number.isFinite(res.total) ? res.total : null,
+      },
       rawText: "",
       rawRows: null,
       pageImages: null,
@@ -979,17 +985,17 @@ async function extractOneFile(f) {
       const apiTotal =
         Number.isFinite(data?.totals?.grandTotal) ? data.totals.grandTotal : Number.isFinite(data?.total) ? data.total : null;
       const total = apiTotal ?? computeTotal(items) ?? null;
-      if (items.length) {
-        state.extracted = {
-          ...state.extracted,
-          source: String(data.mode || "").startsWith("ai") ? "ai" : state.extracted.source,
-          items,
-          total,
-        };
-      }
-    } catch (e) {
-      console.warn("assisted extract failed:", e);
-    }
+  if (items.length) {
+    state.extracted = {
+      ...state.extracted,
+      source: String(data.mode || "").startsWith("ai") ? "ai" : state.extracted.source,
+      items,
+      total,
+    };
+  }
+} catch (e) {
+  console.warn("assisted extract failed:", e);
+}
   }
 
   if (!state.extracted.items?.length) {
@@ -1010,6 +1016,7 @@ async function extractOneFile(f) {
     source: state.extracted.source,
     items: Array.isArray(state.extracted.items) ? [...state.extracted.items] : [],
     total: state.extracted.total,
+    totals: state.extracted.totals,
     rawText: state.extracted.rawText,
     rawRows: state.extracted.rawRows,
   };
@@ -1053,6 +1060,7 @@ async function onExtract() {
         source: ok[0].source,
         items: ok[0].items,
         total: ok[0].total,
+        totals: ok[0].totals || null,
         rawText: ok[0].rawText,
         rawRows: ok[0].rawRows,
       };
@@ -1060,16 +1068,48 @@ async function onExtract() {
       const items = ok.flatMap((r) => r.items || []);
       const computed = computeTotal(items);
       const summed = ok
+        .map((r) => r?.totals?.grandTotal)
+        .map((n) => (Number.isFinite(n) ? n : null))
+        .filter((n) => Number.isFinite(n))
+        .reduce((a, b) => a + b, 0);
+
+      const summedFallback = ok
         .map((r) => r.total)
         .filter((n) => Number.isFinite(n))
         .reduce((a, b) => a + b, 0);
+
+      const shipping = ok
+        .map((r) => r?.totals?.shipping)
+        .filter((n) => Number.isFinite(n))
+        .reduce((a, b) => a + b, 0);
+      const discount = ok
+        .map((r) => r?.totals?.discount)
+        .filter((n) => Number.isFinite(n))
+        .reduce((a, b) => a + b, 0);
+      const subtotal = ok
+        .map((r) => r?.totals?.subtotal)
+        .filter((n) => Number.isFinite(n))
+        .reduce((a, b) => a + b, 0);
+
       // Prefer summing per-file totals (which may include shipping/discount) over recomputing from merged items.
-      const total = (summed > 0 ? summed : null) ?? computed;
+      const total = (summed > 0 ? summed : null) ?? (summedFallback > 0 ? summedFallback : null) ?? computed;
       const rawText = ok
         .map((r) => (r.rawText ? `----- ${r.filename} -----\n${r.rawText}` : ""))
         .filter(Boolean)
         .join("\n\n");
-      state.extracted = { source: "multi", items, total, rawText, rawRows: null };
+      state.extracted = {
+        source: "multi",
+        items,
+        total,
+        totals: {
+          subtotal: subtotal > 0 ? subtotal : computed,
+          shipping: shipping > 0 ? shipping : null,
+          discount: discount > 0 ? discount : null,
+          grandTotal: total,
+        },
+        rawText,
+        rawRows: null,
+      };
     }
 
     renderItems(state.extracted.items);
