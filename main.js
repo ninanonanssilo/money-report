@@ -763,7 +763,9 @@ async function extractOneFile(f) {
       });
 
       const items = normalizeItems(data?.items || []);
-      const total = computeTotal(items) ?? (Number.isFinite(data?.total) ? data.total : null);
+      const apiTotal =
+        Number.isFinite(data?.totals?.grandTotal) ? data.totals.grandTotal : Number.isFinite(data?.total) ? data.total : null;
+      const total = apiTotal ?? computeTotal(items) ?? null;
       if (items.length) {
         state.extracted = {
           ...state.extracted,

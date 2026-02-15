@@ -37,7 +37,7 @@ function toNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function computeTotal(items) {
+function computeItemsSubtotal(items) {
   const nums = (items || [])
     .map((it) => {
       const a = toNum(it?.amount);
@@ -63,6 +63,51 @@ function normalizeItems(items) {
       note: clamp(it?.note || "", 200),
     }))
     .filter((it) => it.name || Number.isFinite(it.amount) || Number.isFinite(it.unitPrice) || it.spec);
+}
+
+function splitAdjustments(items) {
+  const out = [];
+  let shipping = 0;
+  let discount = 0;
+
+  for (const it of items || []) {
+    const name = asString(it?.name).replace(/\s+/g, " ").trim();
+    const amt = toNum(it?.amount);
+    const isSummary = /^(합계|총계|총\s*합계|총\s*금액|결제\s*금액)$/i.test(name);
+
+    if (isSummary) continue;
+
+    if (Number.isFinite(amt) && amt >= 0) {
+      if (/배송/.test(name) || /선결제/.test(name)) {
+        shipping += amt;
+        continue;
+      }
+      if (/할인|쿠폰|프로모션/.test(name)) {
+        discount += amt;
+        continue;
+      }
+    }
+    out.push(it);
+  }
+
+  return {
+    items: out,
+    shipping: shipping > 0 ? shipping : null,
+    discount: discount > 0 ? discount : null,
+  };
+}
+
+function computeTotals({ items, shipping, discount }) {
+  const itemsSubtotal = computeItemsSubtotal(items) ?? 0;
+  const ship = Number.isFinite(toNum(shipping)) ? toNum(shipping) : 0;
+  const disc = Number.isFinite(toNum(discount)) ? toNum(discount) : 0;
+  const grandTotal = itemsSubtotal + ship - disc;
+  return {
+    itemsSubtotal: itemsSubtotal > 0 ? itemsSubtotal : null,
+    shipping: ship > 0 ? ship : null,
+    discount: disc > 0 ? disc : null,
+    grandTotal: grandTotal > 0 ? grandTotal : null,
+  };
 }
 
 function findHeaderRow(rows) {
@@ -120,9 +165,9 @@ function pickCell(row, idx) {
 }
 
 function extractFromRows(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return { items: [], total: null };
+  if (!Array.isArray(rows) || rows.length === 0) return { items: [], totals: computeTotals({ items: [], shipping: null, discount: null }) };
   const headerIdx = findHeaderRow(rows);
-  if (headerIdx < 0) return { items: [], total: null };
+  if (headerIdx < 0) return { items: [], totals: computeTotals({ items: [], shipping: null, discount: null }) };
 
   const header = rows[headerIdx].map((c) => asString(c).trim());
   const col = mapCols(header);
@@ -142,8 +187,9 @@ function extractFromRows(rows) {
   }
 
   const normalized = normalizeItems(items);
-  const total = computeTotal(normalized);
-  return { items: normalized, total };
+  const split = splitAdjustments(normalized);
+  const totals = computeTotals({ items: split.items, shipping: split.shipping, discount: split.discount });
+  return { items: split.items, totals: totals };
 }
 
 function buildPrompt({ source, filename, rows, rawText, pageImages, initialItems }) {
@@ -166,12 +212,14 @@ function buildPrompt({ source, filename, rows, rawText, pageImages, initialItems
     "Return ONLY valid JSON with this schema:",
     "{",
     '  "items": [{"name": string, "spec": string, "qty": number|null, "unitPrice": number|null, "amount": number|null, "note": string}],',
-    '  "total": number|null',
+    '  "shipping": number|null,',
+    '  "discount": number|null,',
+    '  "statedTotal": number|null',
     "}",
     "Rules:",
     "- Do not invent numbers. If missing, use null.",
     "- Prefer amount; else compute amount=qty*unitPrice when both exist.",
-    "- Remove shipping rows / summary rows from items when possible.",
+    "- Do NOT include shipping/discount/summary lines in items; put them into shipping/discount/statedTotal.",
     "- Keep items <= 80.",
     "- Currency is KRW unless explicitly stated otherwise.",
   ].join("\n");
@@ -237,9 +285,11 @@ async function callOpenAI({ apiKey, model, source, filename, rows, rawText, page
           required: ["name", "spec", "qty", "unitPrice", "amount", "note"],
         },
       },
-      total: { anyOf: [{ type: "number" }, { type: "null" }] },
+      shipping: { anyOf: [{ type: "number" }, { type: "null" }] },
+      discount: { anyOf: [{ type: "number" }, { type: "null" }] },
+      statedTotal: { anyOf: [{ type: "number" }, { type: "null" }] },
     },
-    required: ["items", "total"],
+    required: ["items", "shipping", "discount", "statedTotal"],
   };
 
   const res = await fetch("https://api.openai.com/v1/responses", {
@@ -302,8 +352,12 @@ async function callOpenAI({ apiKey, model, source, filename, rows, rawText, page
   }
 
   const items = normalizeItems(Array.isArray(out?.items) ? out.items.slice(0, 80) : []);
-  const total = Number.isFinite(out?.total) ? out.total : computeTotal(items);
-  return { items, total };
+  const split = splitAdjustments(items);
+  const shipping = Number.isFinite(out?.shipping) ? out.shipping : split.shipping;
+  const discount = Number.isFinite(out?.discount) ? out.discount : split.discount;
+  const statedTotal = Number.isFinite(out?.statedTotal) ? out.statedTotal : null;
+  const totals = computeTotals({ items: split.items, shipping, discount });
+  return { items: split.items, shipping: totals.shipping, discount: totals.discount, statedTotal, totals };
 }
 
 export async function onRequestOptions() {
@@ -322,20 +376,45 @@ export async function onRequestPost(context) {
 
     // 1) Deterministic extraction first (works without AI key).
     const deterministic = extractFromRows(rows || []);
+    const detTotals = deterministic?.totals || computeTotals({ items: deterministic.items || [], shipping: null, discount: null });
 
     // 2) AI-assisted extraction if configured.
     const apiKey = context.env?.OPENAI_API_KEY;
     if (!apiKey) {
       if (deterministic.items.length >= 1) {
-        return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total, rev }, { headers: okCors() });
+        return jsonResponse(
+          {
+            mode: "heuristic",
+            items: deterministic.items,
+            shipping: detTotals.shipping,
+            discount: detTotals.discount,
+            statedTotal: null,
+            totals: detTotals,
+            total: detTotals.grandTotal,
+            rev,
+          },
+          { headers: okCors() }
+        );
       }
       return jsonResponse({ mode: "none", items: [], total: null, rev }, { headers: okCors() });
     }
 
     const model = context.env?.OPENAI_MODEL;
     if (deterministic.items.length >= 1) {
-      if (!shouldRefineWithAI(deterministic)) {
-        return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total, rev }, { headers: okCors() });
+      if (!shouldRefineWithAI({ items: deterministic.items, total: detTotals.grandTotal })) {
+        return jsonResponse(
+          {
+            mode: "heuristic",
+            items: deterministic.items,
+            shipping: detTotals.shipping,
+            discount: detTotals.discount,
+            statedTotal: null,
+            totals: detTotals,
+            total: detTotals.grandTotal,
+            rev,
+          },
+          { headers: okCors() }
+        );
       }
       const ai = await callOpenAI({
         apiKey,
@@ -347,11 +426,17 @@ export async function onRequestPost(context) {
         pageImages,
         initialItems: deterministic.items,
       });
-      return jsonResponse({ mode: "ai_refine", items: ai.items, total: ai.total, rev }, { headers: okCors() });
+      return jsonResponse(
+        { mode: "ai_refine", items: ai.items, shipping: ai.shipping, discount: ai.discount, statedTotal: ai.statedTotal, totals: ai.totals, total: ai.totals?.grandTotal ?? null, rev },
+        { headers: okCors() }
+      );
     }
 
     const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages, initialItems: null });
-    return jsonResponse({ mode: "ai", items: ai.items, total: ai.total, rev }, { headers: okCors() });
+    return jsonResponse(
+      { mode: "ai", items: ai.items, shipping: ai.shipping, discount: ai.discount, statedTotal: ai.statedTotal, totals: ai.totals, total: ai.totals?.grandTotal ?? null, rev },
+      { headers: okCors() }
+    );
   } catch (e) {
     const msg = e?.message ? String(e.message) : "unknown error";
     const rev = context.env?.CF_PAGES_COMMIT_SHA || null;
