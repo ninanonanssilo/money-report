@@ -95,6 +95,32 @@ a {
   color: inherit;
 }
 
+/* Collapsible usage guide (details/summary) */
+details.help{
+  border: 1px solid rgba(229, 231, 235, 0.9);
+  background: rgba(255,255,255,.75);
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+  margin: 14px 0 18px;
+}
+details.help summary{
+  cursor: pointer;
+  font-weight: 900;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+details.help summary::-webkit-details-marker{ display:none; }
+details.help summary::after{
+  content: "▾";
+  color: var(--muted);
+  font-weight: 900;
+  transition: transform 140ms ease;
+}
+details.help[open] summary::after{ transform: rotate(180deg); }
+
 main,
 section,
 header,
