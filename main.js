@@ -212,15 +212,14 @@ function renderItems(items) {
     tr.innerHTML = `
       <td class="num">${idx + 1}</td>
       <td>
-        <div class="cell-copy">
-          <div class="text">${escapeHtml(it.name || "")}</div>
-          <button class="pill js-copy" type="button" data-copy="${escapeHtml(it.name || "")}">내용복사</button>
-        </div>
+        <div class="cell-copy text" data-copy="${escapeHtml(it.name || "")}" title="클릭하여 복사">${escapeHtml(
+          it.name || ""
+        )}</div>
       </td>
-      <td>${escapeHtml(it.spec || "")}</td>
-      <td class="num">${escapeHtml(qty)}</td>
-      <td class="num">${escapeHtml(unit)}</td>
-      <td class="num">${escapeHtml(amount)}</td>
+      <td data-copy="${escapeHtml(it.spec || "")}" title="클릭하여 복사">${escapeHtml(it.spec || "")}</td>
+      <td class="num" data-copy="${escapeHtml(qty)}" title="클릭하여 복사">${escapeHtml(qty)}</td>
+      <td class="num" data-copy="${escapeHtml(unit)}" title="클릭하여 복사">${escapeHtml(unit)}</td>
+      <td class="num" data-copy="${escapeHtml(amount)}" title="클릭하여 복사">${escapeHtml(amount)}</td>
     `;
     els.itemsTbody.appendChild(tr);
   });
@@ -1084,11 +1083,12 @@ function init() {
   });
 
   els.itemsTbody.addEventListener("click", async (e) => {
-    const btn = e.target?.closest?.(".js-copy");
-    if (!btn) return;
-    const txt = btn.getAttribute("data-copy") || "";
+    const el = e.target?.closest?.("[data-copy]");
+    if (!el) return;
+    const txt = (el.getAttribute("data-copy") || "").trim();
+    if (!txt) return;
     const ok = await copyText(txt);
-    setStatus(ok ? "내용이 복사되었습니다." : "복사에 실패했습니다.");
+    setStatus(ok ? "셀 내용이 복사되었습니다." : "복사에 실패했습니다.");
   });
 
   els.navToggle.addEventListener("click", () => setNavOpen(true));

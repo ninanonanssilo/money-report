@@ -840,6 +840,18 @@ body.nav-open .scrim {
   vertical-align: middle;
 }
 
+.table td[data-copy] {
+  cursor: pointer;
+}
+
+.table td[data-copy]:hover {
+  background: #f8fafc;
+}
+
+.table td[data-copy]:active {
+  background: #eef2ff;
+}
+
 .table th {
   background: #f9fafb;
   font-weight: 800;
