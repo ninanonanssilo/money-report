@@ -30,11 +30,12 @@ const state = {
     total: null,
     rawText: "",
     rawRows: null, // for assisted extraction on messy formats
+    pageImages: null, // data URLs for scanned/image-only PDFs (AI vision)
   },
 };
 
 function blankExtracted() {
-  return { source: null, items: [], total: null, rawText: "", rawRows: null };
+  return { source: null, items: [], total: null, rawText: "", rawRows: null, pageImages: null };
 }
 
 function todayISO() {
@@ -265,14 +266,6 @@ async function loadPdfJs() {
   return loadPdfJs._p;
 }
 
-async function loadTesseract() {
-  // Use UMD build to keep it compatible with static hosting.
-  await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js");
-  const t = window.Tesseract;
-  if (!t?.recognize) throw new Error("OCR 라이브러리(Tesseract) 로드에 실패했습니다.");
-  return t;
-}
-
 function isSmallScreen() {
   try {
     return window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
@@ -294,59 +287,23 @@ async function renderPdfPageToCanvas(pdfDoc, pageNumber, scale) {
   return canvas;
 }
 
-function binarizeInPlace(data) {
-  // Lightweight binarization to improve OCR on scans.
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i],
-      g = data[i + 1],
-      b = data[i + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    const v = gray > 200 ? 255 : 0;
-    data[i] = data[i + 1] = data[i + 2] = v;
-  }
-}
-
-async function ocrPdfToText(file, { maxPages, scale, lang, onProgress }) {
-  const tesseract = await loadTesseract();
+async function pdfToPageImages(file, { maxPages, scale, onProgress }) {
   const pdfjs = await loadPdfJs();
-
-  // Make OCR asset locations explicit so it works reliably on static hosting.
-  const workerPath = "https://unpkg.com/tesseract.js@5/dist/worker.min.js";
-  const corePath = "https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js";
-  const langPath = "https://tessdata.projectnaptha.com/4.0.0_best";
-
   const ab = await file.arrayBuffer();
   const pdfDoc = await pdfjs.getDocument({ data: ab }).promise;
 
   const pages = Math.min(pdfDoc.numPages, Math.max(1, maxPages || 1));
-  let out = "";
+  const out = [];
 
   for (let p = 1; p <= pages; p++) {
-    onProgress?.(`스캔 PDF OCR 중... (${p}/${pages})`);
-    const canvas = await renderPdfPageToCanvas(pdfDoc, p, scale || 2.0);
-
-    // Basic preprocessing
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    binarizeInPlace(img.data);
-    ctx.putImageData(img, 0, 0);
-
-    const { data } = await tesseract.recognize(canvas, lang || "kor+eng", {
-      workerPath,
-      corePath,
-      langPath,
-      logger: (m) => {
-        if (m?.status === "recognizing text") {
-          const pct = Math.round((m.progress || 0) * 100);
-          onProgress?.(`OCR 인식 중... ${pct}% (p${p}/${pages})`);
-        }
-      },
-    });
-
-    out += "\n" + (data?.text || "");
+    onProgress?.(`스캔 PDF 페이지 렌더링 중... (${p}/${pages})`);
+    const canvas = await renderPdfPageToCanvas(pdfDoc, p, scale || 1.6);
+    // JPEG keeps payload size reasonable while staying readable for tables.
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    out.push(dataUrl);
   }
 
-  return out.trim();
+  return out;
 }
 
 async function extractPdfTextQuick(file, { maxPages }) {
@@ -549,22 +506,34 @@ async function extractFromPdf(file) {
     console.warn("pdf text extract failed:", e);
   }
 
-  // If text is too short, treat as scanned PDF and OCR it.
+  // If text is too short, treat as scanned/image-only PDF and send page images for AI vision.
   const compactLen = text.replace(/\s+/g, "").length;
+  let pageImages = null;
   if (compactLen < 80) {
-    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. OCR을 시작합니다... (느릴 수 있음)");
-    const ocrText = await ocrPdfToText(file, {
-      maxPages: small ? 1 : 2,
-      scale: small ? 1.7 : 2.1,
-      lang: "kor+eng",
-      onProgress: (m) => setStatus(m),
-    });
-    if (!ocrText) throw new Error("OCR 결과가 비어 있습니다. 스캔 품질(흐림/기울기)을 확인해 주세요.");
-    text = ocrText;
-    setStatus("OCR 완료. 품목 구조화를 진행합니다...");
+    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. 이미지 기반 추출을 진행합니다... (GPT-5.2)");
+    try {
+      pageImages = await pdfToPageImages(file, {
+        maxPages: small ? 1 : 2,
+        scale: small ? 1.35 : 1.6,
+        onProgress: (m) => setStatus(m),
+      });
+    } catch (e) {
+      console.warn("pdf page image render failed:", e);
+    }
+    if (!pageImages?.length) {
+      throw new Error("스캔 PDF로 보이지만 페이지 이미지를 만들지 못했습니다. (브라우저/파일을 바꿔 다시 시도해 주세요)");
+    }
+    setStatus("이미지 준비 완료. 품목 구조화를 진행합니다...");
   }
 
-  state.extracted = { source: "pdf", items: [], total: null, rawText: String(text || "").trim(), rawRows: null };
+  state.extracted = {
+    source: "pdf",
+    items: [],
+    total: null,
+    rawText: String(text || "").trim(),
+    rawRows: null,
+    pageImages,
+  };
 }
 
 function toDocPayload() {
@@ -595,11 +564,11 @@ function validateForGenerate(payload) {
   return errs;
 }
 
-async function callExtractApi({ source, filename, rows, rawText }) {
+async function callExtractApi({ source, filename, rows, rawText, pageImages }) {
   const res = await fetch("/api/extract", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source, filename, rows, rawText }),
+    body: JSON.stringify({ source, filename, rows, rawText, pageImages }),
   });
 
   const txt = await res.text();
@@ -749,6 +718,7 @@ async function extractOneFile(f) {
         filename: f.name,
         rows,
         rawText,
+        pageImages: state.extracted.pageImages,
       });
 
       const items = normalizeItems(data?.items || []);
@@ -773,7 +743,9 @@ async function extractOneFile(f) {
       );
     }
     if (state.extracted.source === "pdf") {
-      throw new Error("PDF에서 품목을 찾지 못했습니다. 스캔본이면 OCR이 필요하거나, 품목표가 이미지/표로만 존재할 수 있습니다.");
+      throw new Error(
+        "PDF에서 품목을 찾지 못했습니다. 스캔본이거나 품목표가 이미지/표로만 존재할 수 있습니다. (이미지 기반 추출이 필요)"
+      );
     }
   }
 

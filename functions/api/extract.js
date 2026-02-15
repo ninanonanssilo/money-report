@@ -146,17 +146,20 @@ function extractFromRows(rows) {
   return { items: normalized, total };
 }
 
-function buildPrompt({ source, filename, rows, rawText }) {
+function buildPrompt({ source, filename, rows, rawText, pageImages }) {
   const safe = {
     source: clamp(source, 40),
     filename: clamp(filename, 120),
     // Truncate rows aggressively; model doesn't need everything.
     rows: Array.isArray(rows) ? rows.slice(0, 220).map((r) => (Array.isArray(r) ? r.slice(0, 18) : [])) : null,
     rawText: clamp(rawText, 9000),
+    // Images are sent separately as multimodal inputs; keep only metadata here.
+    pageImages: Array.isArray(pageImages) && pageImages.length ? { count: pageImages.length } : null,
   };
 
   const instructions = [
     "You extract line items from Korean marketplace quotation/order exports (XLS/XLSX/PDF text).",
+    "If page images are provided (scanned PDF / image-only tables), use them as the primary source of truth.",
     "Return ONLY valid JSON with this schema:",
     "{",
     '  "items": [{"name": string, "spec": string, "qty": number|null, "unitPrice": number|null, "amount": number|null, "note": string}],',
@@ -173,10 +176,26 @@ function buildPrompt({ source, filename, rows, rawText }) {
   return { instructions, safe };
 }
 
-async function callOpenAI({ apiKey, model, source, filename, rows, rawText }) {
-  const { instructions, safe } = buildPrompt({ source, filename, rows, rawText });
+function normalizePageImages(v) {
+  if (!Array.isArray(v)) return [];
+  const out = [];
+  for (const x of v) {
+    if (typeof x !== "string") continue;
+    const s = x.trim();
+    if (!s.startsWith("data:image/")) continue;
+    // Guardrail: avoid huge payloads / abuse.
+    if (s.length > 2500000) continue;
+    out.push(s);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
 
-  const useModel = (asString(model).trim() || "gpt-5").trim();
+async function callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages }) {
+  const images = normalizePageImages(pageImages);
+  const { instructions, safe } = buildPrompt({ source, filename, rows, rawText, pageImages: images });
+
+  const useModel = (asString(model).trim() || "gpt-5.2").trim();
 
   const schema = {
     type: "object",
@@ -215,7 +234,10 @@ async function callOpenAI({ apiKey, model, source, filename, rows, rawText }) {
       input: [
         {
           role: "user",
-          content: [{ type: "input_text", text: JSON.stringify(safe) }],
+          content: [
+            { type: "input_text", text: JSON.stringify(safe) },
+            ...images.map((dataUrl) => ({ type: "input_image", image_url: dataUrl })),
+          ],
         },
       ],
       text: {
@@ -275,6 +297,7 @@ export async function onRequestPost(context) {
     const filename = body?.filename || "";
     const rows = body?.rows || null;
     const rawText = body?.rawText || "";
+    const pageImages = body?.pageImages || null;
     const rev = context.env?.CF_PAGES_COMMIT_SHA || null;
 
     // 1) Deterministic extraction first (works without AI key).
@@ -290,7 +313,7 @@ export async function onRequestPost(context) {
     }
 
     const model = context.env?.OPENAI_MODEL;
-    const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText });
+    const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages });
     return jsonResponse({ mode: "ai", items: ai.items, total: ai.total, rev }, { headers: okCors() });
   } catch (e) {
     const msg = e?.message ? String(e.message) : "unknown error";
