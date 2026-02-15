@@ -26,6 +26,9 @@ const els = {
 };
 
 const state = {
+  ui: {
+    extracting: false,
+  },
   extracted: {
     source: null,
     items: [],
@@ -134,9 +137,10 @@ function numToKoreanWon(n) {
 }
 
 function budgetLine(n) {
+  if (n === null || n === undefined || n === "") return "미기재";
   const intN = Math.floor(Number(n));
-  const safe = Number.isFinite(intN) && intN >= 0 ? intN : 0;
-  return `금${fmtMoney(safe)}원(${numToKoreanWon(safe)})`;
+  if (!Number.isFinite(intN) || intN < 0) return "미기재";
+  return `금${fmtMoney(intN)}원(${numToKoreanWon(intN)})`;
 }
 
 function escapeHtml(s) {
@@ -961,7 +965,10 @@ function buildOfficialOutline(payload) {
 
   const purpose = payload?.meta?.purpose?.trim();
   const purposeLine = purpose ? purpose.replace(/\s+/g, " ").slice(0, 160) : "미기재";
-  const totalN = Number.isFinite(total) && total >= 0 ? total : 0;
+
+  // If items are not extracted yet, avoid showing 0원 (misleading).
+  const hasQuote = items.length > 0 || (Number.isFinite(total) && total > 0);
+  const totalN = hasQuote && Number.isFinite(total) && total >= 0 ? total : null;
 
   const subject = String(payload?.meta?.subject || "").trim() || "미기재";
   const buySentence = `${subject}${josa(subject, "을", "를")} 다음과 같이 구입하고자 합니다.`;
@@ -986,6 +993,11 @@ function setBusy(busy) {
 }
 
 async function onAutoOutline() {
+  if (state.ui.extracting) {
+    toast("품목내역 추출이 완료된 뒤에 자동생성을 눌러주세요.", { ms: 2200 });
+    return;
+  }
+
   const payload = toDocPayload();
   if (!payload.meta.subject) {
     alert("제목을 먼저 입력하세요.");
@@ -1013,8 +1025,13 @@ async function onAutoOutline() {
 
 function forceBudgetLine(outline, payload) {
   const items = payload?.quote?.items || [];
-  const total = payload?.quote?.total ?? computeTotal(items) ?? 0;
-  const line = `3. 소요 예산: ${budgetLine(total)}`;
+  const total = payload?.quote?.total ?? computeTotal(items) ?? null;
+
+  // Avoid forcing an incorrect 0원 line when the quote is not extracted yet.
+  const hasQuote = items.length > 0 || (Number.isFinite(total) && total > 0);
+  const safeTotal = hasQuote ? total : null;
+
+  const line = `3. 소요 예산: ${budgetLine(safeTotal)}`;
   const lines = String(outline || "").split(/\r?\n/);
   const idx = lines.findIndex((l) => l.trim().startsWith("3. 소요 예산:"));
   if (idx >= 0) {
@@ -1106,6 +1123,7 @@ async function onExtract() {
     return;
   }
 
+  state.ui.extracting = true;
   setBusy(true);
 
   try {
@@ -1204,6 +1222,7 @@ async function onExtract() {
     console.error(e);
     setStatus(`실패: ${e?.message || String(e)}`);
   } finally {
+    state.ui.extracting = false;
     setBusy(false);
   }
 }
