@@ -393,7 +393,7 @@ async function extractScannedPdfViaAi(file, { scale, quality, chunkSize }) {
       imgs.push(await renderPdfPageToDataUrl(pdfDoc, p, { scale, quality }));
     }
 
-    setStatus(`AI 추출 중... (${start}-${end}/${totalPages})`);
+    setStatus(`AI 추출 중입니다. 잠시만 기다려주세요... (${start}-${end}/${totalPages})`);
     const data = await callExtractApi({
       source: "pdf",
       filename: file.name,
@@ -761,7 +761,7 @@ async function extractFromPdf(file) {
   // If text is too short, treat as scanned/image-only PDF and send page images for AI vision.
   const compactLen = text.replace(/\s+/g, "").length;
   if (compactLen < 80) {
-    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. 전체 페이지 AI 추출을 진행합니다... (GPT-5.2)");
+    setStatus("텍스트가 거의 없어 스캔본으로 판단했습니다. AI 추출 중입니다. 잠시만 기다려주세요. (페이지 수에 따라 시간이 걸릴 수 있습니다)");
     const res = await extractScannedPdfViaAi(file, {
       scale: small ? 1.0 : 1.15,
       quality: 0.72,
@@ -973,6 +973,7 @@ async function extractOneFile(f) {
     try {
       const rows = state.extracted.rawRows;
       const rawText = state.extracted.rawText;
+      setStatus("AI 추출 중입니다. 잠시만 기다려주세요.");
       const data = await callExtractApi({
         source: state.extracted.source,
         filename: f.name,
@@ -985,17 +986,17 @@ async function extractOneFile(f) {
       const apiTotal =
         Number.isFinite(data?.totals?.grandTotal) ? data.totals.grandTotal : Number.isFinite(data?.total) ? data.total : null;
       const total = apiTotal ?? computeTotal(items) ?? null;
-  if (items.length) {
-    state.extracted = {
-      ...state.extracted,
-      source: String(data.mode || "").startsWith("ai") ? "ai" : state.extracted.source,
-      items,
-      total,
-    };
-  }
-} catch (e) {
-  console.warn("assisted extract failed:", e);
-}
+      if (items.length) {
+        state.extracted = {
+          ...state.extracted,
+          source: String(data.mode || "").startsWith("ai") ? "ai" : state.extracted.source,
+          items,
+          total,
+        };
+      }
+    } catch (e) {
+      console.warn("assisted extract failed:", e);
+    }
   }
 
   if (!state.extracted.items?.length) {
