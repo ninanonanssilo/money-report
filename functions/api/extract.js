@@ -146,7 +146,7 @@ function extractFromRows(rows) {
   return { items: normalized, total };
 }
 
-function buildPrompt({ source, filename, rows, rawText, pageImages }) {
+function buildPrompt({ source, filename, rows, rawText, pageImages, initialItems }) {
   const safe = {
     source: clamp(source, 40),
     filename: clamp(filename, 120),
@@ -155,11 +155,14 @@ function buildPrompt({ source, filename, rows, rawText, pageImages }) {
     rawText: clamp(rawText, 9000),
     // Images are sent separately as multimodal inputs; keep only metadata here.
     pageImages: Array.isArray(pageImages) && pageImages.length ? { count: pageImages.length } : null,
+    // If heuristic extraction ran, provide it as a hint for correction/normalization.
+    initialItems: Array.isArray(initialItems) && initialItems.length ? initialItems.slice(0, 60) : null,
   };
 
   const instructions = [
     "You extract line items from Korean marketplace quotation/order exports (XLS/XLSX/PDF text).",
     "If page images are provided (scanned PDF / image-only tables), use them as the primary source of truth.",
+    "If initialItems are provided, treat them as a hint but correct any missing/wrong qty/unitPrice/amount.",
     "Return ONLY valid JSON with this schema:",
     "{",
     '  "items": [{"name": string, "spec": string, "qty": number|null, "unitPrice": number|null, "amount": number|null, "note": string}],',
@@ -191,9 +194,26 @@ function normalizePageImages(v) {
   return out;
 }
 
-async function callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages }) {
+function shouldRefineWithAI({ items, total }) {
+  const arr = Array.isArray(items) ? items : [];
+  if (!arr.length) return true;
+  const missAmount = arr.filter((it) => !(Number.isFinite(it?.amount) && it.amount >= 0)).length;
+  const missAll = arr.filter((it) => {
+    const hasAmt = Number.isFinite(it?.amount) && it.amount >= 0;
+    const hasCalc = Number.isFinite(it?.qty) && Number.isFinite(it?.unitPrice);
+    return !hasAmt && !hasCalc;
+  }).length;
+
+  // If total missing, or lots of missing amounts, ask the model to refine.
+  if (!(Number.isFinite(total) && total > 0)) return true;
+  if (missAll / arr.length > 0.25) return true;
+  if (missAmount / arr.length > 0.55) return true;
+  return false;
+}
+
+async function callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages, initialItems }) {
   const images = normalizePageImages(pageImages);
-  const { instructions, safe } = buildPrompt({ source, filename, rows, rawText, pageImages: images });
+  const { instructions, safe } = buildPrompt({ source, filename, rows, rawText, pageImages: images, initialItems });
 
   const useModel = (asString(model).trim() || "gpt-5.2").trim();
 
@@ -302,18 +322,35 @@ export async function onRequestPost(context) {
 
     // 1) Deterministic extraction first (works without AI key).
     const deterministic = extractFromRows(rows || []);
-    if (deterministic.items.length >= 1) {
-      return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total, rev }, { headers: okCors() });
-    }
 
     // 2) AI-assisted extraction if configured.
     const apiKey = context.env?.OPENAI_API_KEY;
     if (!apiKey) {
+      if (deterministic.items.length >= 1) {
+        return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total, rev }, { headers: okCors() });
+      }
       return jsonResponse({ mode: "none", items: [], total: null, rev }, { headers: okCors() });
     }
 
     const model = context.env?.OPENAI_MODEL;
-    const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages });
+    if (deterministic.items.length >= 1) {
+      if (!shouldRefineWithAI(deterministic)) {
+        return jsonResponse({ mode: "heuristic", items: deterministic.items, total: deterministic.total, rev }, { headers: okCors() });
+      }
+      const ai = await callOpenAI({
+        apiKey,
+        model,
+        source,
+        filename,
+        rows,
+        rawText,
+        pageImages,
+        initialItems: deterministic.items,
+      });
+      return jsonResponse({ mode: "ai_refine", items: ai.items, total: ai.total, rev }, { headers: okCors() });
+    }
+
+    const ai = await callOpenAI({ apiKey, model, source, filename, rows, rawText, pageImages, initialItems: null });
     return jsonResponse({ mode: "ai", items: ai.items, total: ai.total, rev }, { headers: okCors() });
   } catch (e) {
     const msg = e?.message ? String(e.message) : "unknown error";
