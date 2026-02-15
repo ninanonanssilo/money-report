@@ -1,0 +1,62 @@
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>견적서 업로드 양식 (예시)</title>
+  </head>
+  <body>
+    <div>아래와 같이 견적합니다.</div>
+
+    <table class="list">
+      <thead>
+        <tr>
+          <th class="first">번호</th>
+          <th>상품명 / 필수선택 / 추가구성</th>
+          <th>공급자명</th>
+          <th>수량</th>
+          <th>공급가액</th>
+          <th>할인금액</th>
+          <th>공급합계</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="first">1</td>
+          <td class="align-l">예시 품목 A</td>
+          <td>예시공급자</td>
+          <td>1</td>
+          <td>10,000원</td>
+          <td>0원</td>
+          <td>10,000원</td>
+        </tr>
+        <tr>
+          <td class="first">2</td>
+          <td class="align-l">예시 품목 B</td>
+          <td>예시공급자</td>
+          <td>2</td>
+          <td>20,000원</td>
+          <td>1,000원</td>
+          <td>19,000원</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4" class="first">합계</td>
+          <td>30,000원</td>
+          <td>1,000원</td>
+          <td>29,000원</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <table class="sum">
+      <tr>
+        <th>배송비</th>
+        <td>0원</td>
+      </tr>
+      <tr>
+        <th class="pd">총 구매금액</th>
+        <td class="pd">29,000원</td>
+      </tr>
+    </table>
+  </body>
+</html>
