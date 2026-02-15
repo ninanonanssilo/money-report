@@ -7,25 +7,30 @@
     <meta name="description" content="견적서(엑셀/PDF)로 품의서를 자동 작성합니다." />
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
 
-    <link rel="stylesheet" href="style.css?v=20260215-11" />
-    <script src="main.js?v=20260215-11" type="module" defer></script>
+    <link rel="stylesheet" href="style.css?v=20260215-12" />
+    <script src="main.js?v=20260215-12" type="module" defer></script>
   </head>
   <body>
     <aside id="sidebar" class="sidebar" aria-label="카테고리">
       <div class="side-head">
-        <div class="side-brand" aria-label="서비스">
+        <a class="side-brand" href="https://edu-tools.pages.dev/" rel="noreferrer" aria-label="Edu Tools로 이동">
           <div class="side-mark" aria-hidden="true"></div>
           <div class="side-brand-text">
             <div class="side-app">Edu Tools</div>
             <div class="side-sub">업무 자동화 도우미</div>
           </div>
-        </div>
+        </a>
         <button id="navClose" class="icon-btn" type="button" aria-label="닫기">
           <span aria-hidden="true">×</span>
         </button>
       </div>
       <nav class="side-nav" aria-label="카테고리 목록">
         <div class="side-section">생성기</div>
+        <a class="side-link" href="https://school-letter.pages.dev/" target="_blank" rel="noreferrer">
+          <span class="side-ico" aria-hidden="true">H</span>
+          <span class="side-label">가정통신문 생성기</span>
+          <span class="side-ext" aria-hidden="true">↗</span>
+        </a>
         <a class="side-link is-active" href="/" aria-current="page">
           <span class="side-ico" aria-hidden="true">P</span>
           <span class="side-label">품의 기안 생성기</span>
@@ -35,9 +40,14 @@
           <span class="side-label">학교 공문 자동 작성</span>
           <span class="side-ext" aria-hidden="true">↗</span>
         </a>
+        <a class="side-link" href="https://class-assignment.pages.dev/" target="_blank" rel="noreferrer">
+          <span class="side-ico" aria-hidden="true">C</span>
+          <span class="side-label">반편성 생성기</span>
+          <span class="side-ext" aria-hidden="true">↗</span>
+        </a>
         <div class="side-divider" role="separator" aria-hidden="true"></div>
         <div class="side-section">연동</div>
-        <div class="side-note">추후 이 메뉴에서 서비스 간 연동을 추가합니다.</div>
+        <div class="side-note">같은 카테고리에서 Edu Tools 서비스를 이동할 수 있게 구성했습니다.</div>
       </nav>
       <div class="side-foot">
         <div class="side-foot-spacer" aria-hidden="true"></div>

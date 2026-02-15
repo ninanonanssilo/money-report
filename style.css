@@ -161,6 +161,9 @@ body.nav-open .scrim {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
 }
 
 .side-mark {
